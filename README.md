@@ -20,6 +20,7 @@
 - **2026-04-23**:
   - 新增后处理 `Clip Editor`：可对单个片段进行边界、字幕与封面标题的二次调整，并支持倍速重渲染
   - Streamlit 新增浏览器内 `文件上传` 入口，可直接上传本地视频并创建处理任务；支持[局域网/共享机器模式](#lan-shared-machine-mode)
+  - 查看 [演示视频](https://www.bilibili.com/video/BV1TwokB3Efh) 了解完整使用流程
 - **2026-04-19**:
   - 新增 `--deep-optimize` / Streamlit「深度优化」模式：在候选片段汇总后增加一轮更深入的 AI 检查与边界修正，以提升片段边界质量和独立成段效果，详见[开启 `--deep-optimize` 时](#开启---deep-optimize-时)
 - **2026-04-04**:

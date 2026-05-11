@@ -20,6 +20,7 @@ Give it a video URL or local file, and it handles the full pipeline: **Download 
 - **2026-04-23**:
   - Added a post-processing `Clip Editor` for per-clip boundary, subtitle, and cover-title adjustments, with support for speed-based rerendering
   - Added an in-browser `File Upload` entry in Streamlit so local videos can be uploaded directly to create processing jobs; supports [LAN/shared-machine mode](#lan-shared-machine-mode)
+  - Watch the [walkthrough video](https://www.bilibili.com/video/BV1TwokB3Efh) for the full workflow
 - **2026-04-19**:
   - Added `--deep-optimize` / Streamlit “Deep Optimize” mode: after candidate highlight aggregation, OpenClip runs extra AI review, boundary repair, and re-review steps to improve clip boundaries and standalone quality. See [With `--deep-optimize`](#with---deep-optimize)
 - **2026-04-04**:
