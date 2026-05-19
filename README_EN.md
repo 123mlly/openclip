@@ -17,6 +17,8 @@ Give it a video URL or local file, and it handles the full pipeline: **Download 
 
 ## 📢 News
 
+- **2026-05-20**:
+  - Added clip length presets: Streamlit and CLI now support `Auto (30s-3m)`, `30s-60s`, `60s-90s`, `90s-3m`, and `3m-5m`
 - **2026-04-23**:
   - Added a post-processing `Clip Editor` for per-clip boundary, subtitle, and cover-title adjustments, with support for speed-based rerendering
   - Added an in-browser `File Upload` entry in Streamlit so local videos can be uploaded directly to create processing jobs; supports [LAN/shared-machine mode](#lan-shared-machine-mode)
@@ -413,6 +415,7 @@ Remote video downloads sometimes hit login checks, bot protection, or platform r
 | `--deep-optimize` | Run the deeper clip review and refinement workflow to improve boundaries and standalone quality, at the cost of slower processing. See [With `--deep-optimize`](#with---deep-optimize) | Off |
 | `--user-intent` | Natural language description of what you're looking for (e.g. `"moments about AI risks"`); steers LLM clip selection and ranking | None |
 | `--max-clips` | Maximum number of highlight clips | `5` |
+| `--clip-length` | Target clip length preset: `auto`, `30_60`, `60_90`, `90_180`, `180_300`, corresponding to `Auto (30s-3m)`, `30s-60s`, `60s-90s`, `90s-3m`, and `3m-5m`; only affects `engaging_moments` mode | `auto` |
 | `--title-style` | Title artistic style (see list below) | `fire_flame` |
 | `--title-font-size` | Font size preset for artistic titles. Options: small(30px), medium(40px), large(50px), xlarge(60px) (default: medium=40px) | `medium` |
 | `--cover-text-location` | Cover text position (`top`/`upper_middle`/`bottom`/`center`) | `center` |

@@ -17,6 +17,8 @@
 
 ## 📢 最新动态
 
+- **2026-05-20**:
+  - 新增片段时长预设：Streamlit 与 CLI 支持选择 `Auto (30s-3m)`、`30s-60s`、`60s-90s`、`90s-3m`、`3m-5m`
 - **2026-04-23**:
   - 新增后处理 `Clip Editor`：可对单个片段进行边界、字幕与封面标题的二次调整，并支持倍速重渲染
   - Streamlit 新增浏览器内 `文件上传` 入口，可直接上传本地视频并创建处理任务；支持[局域网/共享机器模式](#lan-shared-machine-mode)
@@ -413,6 +415,7 @@ uv run python video_orchestrator.py \
 | `--deep-optimize` | 启用更深入的片段复审与优化流程，提升片段边界和独立成段质量，但处理更慢。详见[开启 `--deep-optimize` 时](#开启---deep-optimize-时) | 关 |
 | `--user-intent` | 用自然语言描述关注重点（如 `"关于 AI 风险的观点"`），引导 AI 优先选取相关片段 | 无 |
 | `--max-clips` | 最大精彩片段数量 | `5` |
+| `--clip-length` | 目标片段时长预设：`auto`、`30_60`、`60_90`、`90_180`、`180_300`，分别对应 `Auto (30s-3m)`、`30s-60s`、`60s-90s`、`90s-3m`、`3m-5m`；仅影响 `engaging_moments` 模式 | `auto` |
 | `--title-style` | Banner 标题艺术风格（见下方列表） | `fire_flame` |
 | `--title-font-size` | 艺术标题字体大小（可选：small=30px, medium=40px, large=50px, xlarge=60px，默认：medium=40px） | `medium` |
 | `--cover-text-location` | 封面文字位置（`top`/`upper_middle`/`bottom`/`center`） | `center` |
