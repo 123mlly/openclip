@@ -138,43 +138,19 @@ uv sync
 <details>
 <summary>🈶 Enable Paraformer For Local Chinese ASR (Optional)</summary>
 
-If you want local ASR to prefer Paraformer for Chinese audio, complete these extra steps:
+Local ASR routes automatically by language: English uses Whisper and Chinese prefers Paraformer. To enable Paraformer, install the extra dependencies:
 
 ```bash
-# 1) Install Paraformer runtime dependencies
 uv sync --extra paraformer
 ```
 
-```bash
-# 2) Prepare a compatible Paraformer helper checkout
-# Default location:
-third_party/funasr-paraformer
-```
-
-Recommended: place that helper checkout inside this repo so you do not bake machine-specific absolute paths into your setup:
-
-```bash
-mkdir -p third_party
-git clone <funasr-paraformer-helper-repo> third_party/funasr-paraformer
-```
-
-OpenClip currently expects these two helper scripts under that checkout:
-
-- `tools/transcribe_long_audio.py`
-- `tools/funasr_json_to_srt.py`
-
-If your helper checkout lives elsewhere, point OpenClip to it with:
+OpenClip uses the bundled helper by default: `third_party/funasr-paraformer`. You normally do not need to set `PARAFORMER_PROJECT_DIR`; set it only if your helper checkout lives outside the repo:
 
 ```bash
 export PARAFORMER_PROJECT_DIR=/path/to/funasr-paraformer
 ```
 
-Notes:
-
-- The default path is repo-relative: `third_party/funasr-paraformer`
-- If the helper checkout has its own `.venv`, OpenClip will prefer that interpreter
-- If the helper checkout does not have a `.venv`, OpenClip falls back to the current repo environment created by `uv sync --extra paraformer`
-- If the helper checkout or dependencies are unavailable, OpenClip automatically falls back to Whisper
+If the Paraformer dependencies or helper are unavailable, OpenClip automatically falls back to Whisper.
 
 </details>
 
@@ -633,10 +609,7 @@ This usually produces clips with cleaner boundaries and more complete context.
 - turn it on when clip quality matters more than speed and cost
 - leave it off when throughput and cost matter more
 
-## 📎 Others
-
-<details>
-<summary>🐛 Troubleshooting</summary>
+## 🐛 Troubleshooting
 
 ### Download fails
 **Cause**: 
@@ -665,7 +638,8 @@ This usually produces clips with cleaner boundaries and more complete context.
 ### Chinese text not displaying
 **Cause**: Missing Chinese fonts. OpenClip auto-detects common CJK fonts on macOS (STHeiti, PingFang), Windows (SimSun, Microsoft YaHei), and Linux (Noto / WenQuanYi / Source Han). If none are available, it now reports a clear missing-font error instead of silently rendering broken text. On Linux, install `fonts-noto-cjk`, `fonts-wqy-zenhei`, or `adobe-source-han-sans-otc-fonts`.
 
-</details>
+### Chinese subtitles appear in Traditional Chinese
+**Suggestion**: Whisper can sometimes output Traditional Chinese. First follow the earlier [Paraformer local Chinese ASR](#paraformer-installation) setup; Chinese audio will prefer Paraformer, which usually produces more stable Simplified Chinese subtitles.
 
 ## 🔄 Comparison with AutoClip
 

@@ -138,43 +138,19 @@ uv sync
 <details>
 <summary>🈶 启用 Paraformer 中文本地 ASR（可选）</summary>
 
-如果你希望在本地 ASR 路径里优先使用 Paraformer 处理中文音频，请额外完成下面两步：
+本地 ASR 会按语言自动路由：英文使用 Whisper，中文优先使用 Paraformer。若要启用 Paraformer，请安装额外依赖：
 
 ```bash
-# 1) 安装 Paraformer 运行时依赖
 uv sync --extra paraformer
 ```
 
-```bash
-# 2) 准备兼容的 Paraformer helper checkout
-# 默认目录：
-third_party/funasr-paraformer
-```
-
-推荐直接把 helper 仓库 checkout 到当前项目内，避免把开发机绝对路径写进配置：
-
-```bash
-mkdir -p third_party
-git clone <funasr-paraformer-helper-repo> third_party/funasr-paraformer
-```
-
-OpenClip 当前会在这个 helper 目录里查找两个脚本：
-
-- `tools/transcribe_long_audio.py`
-- `tools/funasr_json_to_srt.py`
-
-如果你的 helper 项目不在默认目录，可以设置：
+OpenClip 默认使用仓库内置的 helper：`third_party/funasr-paraformer`。通常不需要设置 `PARAFORMER_PROJECT_DIR`；只有当你把 helper 放在仓库外部时才需要设置：
 
 ```bash
 export PARAFORMER_PROJECT_DIR=/path/to/funasr-paraformer
 ```
 
-说明：
-
-- 默认路径已经是仓库相对路径：`third_party/funasr-paraformer`
-- 如果 helper 项目自带 `.venv`，OpenClip 会优先使用它
-- 如果 helper 项目没有 `.venv`，OpenClip 会退回使用当前仓库通过 `uv sync --extra paraformer` 安装出来的环境
-- 如果 helper 项目或依赖不可用，OpenClip 会自动回退到 Whisper
+如果 Paraformer 依赖或 helper 不可用，OpenClip 会自动回退到 Whisper。
 
 </details>
 
@@ -633,10 +609,7 @@ rejudge（修复后复审）
 - 如果更看重片段质量，建议开启
 - 如果更看重速度和成本，可以保持关闭
 
-## 📎 其他
-
-<details>
-<summary>🐛 故障排除</summary>
+## 🐛 故障排除
 
 ### 下载失败
 **原因**：
@@ -665,7 +638,8 @@ rejudge（修复后复审）
 ### 中文文本不显示
 **原因**：缺少中文字体。OpenClip 会自动检测 macOS（STHeiti、PingFang）、Windows（宋体、微软雅黑）以及 Linux 上常见的 Noto / WenQuanYi / Source Han 字体；如果都找不到，会直接提示缺少字体而不是继续生成异常文字。Linux 可安装 `fonts-noto-cjk`、`fonts-wqy-zenhei` 或 `adobe-source-han-sans-otc-fonts`。
 
-</details>
+### 字幕出现繁体中文
+**建议**：Whisper 有时会输出繁体中文。请先按上文的 [Paraformer 中文本地 ASR](#paraformer-installation) 说明安装 Paraformer 依赖；中文音频会优先走 Paraformer，通常更稳定地产生简体中文字幕。
 
 ## 🔄 与 AutoClip 的对比
 
