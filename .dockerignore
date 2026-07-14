@@ -1,0 +1,54 @@
+# Git / VCS
+.git
+.gitignore
+.gitattributes
+
+# Local envs & secrets
+.env
+.env.*
+!.env.example
+
+# Python / tooling
+.venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+*.egg-info
+uv.lock
+
+# Frontend build artifacts (built in Docker stage)
+web_frontend/node_modules
+web_frontend/dist
+web_frontend/.vite
+
+# Runtime data (mounted as volumes)
+processed_videos
+data
+temp_prompts
+jobs
+
+# Large / local-only assets
+*.mp4
+*.mov
+*.mkv
+*.webm
+demo/**/*.mp4
+**/.playwright-mcp
+openclip-*.png
+**/*.png
+!logo.png
+!web_frontend/public/**
+
+# IDE / agent
+.cursor
+.claude
+.trae
+.idea
+.vscode
+agent-transcripts
+
+# Docs / CI noise not needed in image
+**/.DS_Store
+**/Thumbs.db

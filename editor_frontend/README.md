@@ -1,22 +1,7 @@
-# OpenClip editor frontend
+# OpenClip editor frontend (legacy)
 
-React + TypeScript + Vite frontend for the OpenClip post-generation clip editor.
+The clip editor UI now lives in **`web_frontend/src/editor/`** and is served from the main app at:
 
-## Scripts
+`http://127.0.0.1:8502/editor/:projectId`
 
-- `npm run dev` — local Vite dev server
-- `npm run build` — type-check + production build
-- `npm run lint` — ESLint
-- `npm run test` — Vitest component tests
-
-## Current scope
-
-The frontend now targets the real manifest-backed editor API:
-
-- loads projects from `/api/projects/:project_id`
-- edits one active clip at a time
-- sends bounds, subtitle, and cover-title updates to the Python service
-- queues targeted rerender jobs and polls job status
-- falls back to a clearly labeled demo shell only when the editor service is unavailable
-
-The remaining gaps are UX polish and deeper end-to-end media verification, not the basic frontend/service contract.
+This directory is kept for the standalone `editor_runtime.py` / Streamlit path (port 8765). Prefer the integrated web UI for new work.

@@ -41,6 +41,34 @@ def test_build_whisper_initial_prompt_ignores_non_chinese_languages():
     assert build_whisper_initial_prompt("en") is None
 
 
+def test_resolve_faster_whisper_model_aliases():
+    from core.transcript_generation_whisper import resolve_faster_whisper_model_name
+
+    assert resolve_faster_whisper_model_name("turbo") == "large-v3-turbo"
+    assert resolve_faster_whisper_model_name("large") == "large-v3"
+    assert resolve_faster_whisper_model_name("base") == "base"
+
+
+def test_write_faster_whisper_srt(tmp_path):
+    from types import SimpleNamespace
+
+    from core.transcript_generation_whisper import write_faster_whisper_srt
+
+    output = tmp_path / "out.srt"
+    write_faster_whisper_srt(
+        [
+            SimpleNamespace(start=0.0, end=1.25, text=" Hello "),
+            SimpleNamespace(start=1.25, end=2.0, text=""),
+            SimpleNamespace(start=2.0, end=3.5, text="World"),
+        ],
+        output,
+    )
+    content = output.read_text(encoding="utf-8")
+    assert "1\n00:00:00,000 --> 00:00:01,250\nHello\n" in content
+    assert "2\n00:00:02,000 --> 00:00:03,500\nWorld\n" in content
+    assert content.count("\n\n") >= 1
+
+
 class FakeParaformerProcessor:
     def __init__(self, should_fail: bool = False):
         self.should_fail = should_fail

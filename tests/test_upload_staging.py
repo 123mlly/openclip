@@ -76,3 +76,28 @@ def test_sanitize_uploaded_filename_rejects_unsupported_extension():
         assert "Unsupported upload file type" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_stage_cookies_file_accepts_netscape_txt(tmp_path):
+    from core.upload_staging import stage_cookies_file
+
+    content = b"# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tFALSE\t0\tname\tvalue\n"
+    uploaded_file = FakeUploadedFile("cookies.txt", content)
+
+    metadata = stage_cookies_file(uploaded_file, uploads_root_for_output_dir(tmp_path), "owner-a")
+
+    assert metadata["kind"] == "cookies"
+    assert metadata["original_filename"] == "cookies.txt"
+    assert Path(metadata["staged_path"]).read_bytes() == content
+
+
+def test_stage_cookies_file_rejects_unsupported_extension(tmp_path):
+    from core.upload_staging import stage_cookies_file
+
+    uploaded_file = FakeUploadedFile("cookies.json", b"{}")
+    try:
+        stage_cookies_file(uploaded_file, uploads_root_for_output_dir(tmp_path), "owner-a")
+    except ValueError as exc:
+        assert "cookies.txt" in str(exc).lower() or ".txt" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")

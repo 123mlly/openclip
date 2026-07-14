@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-Whisper Transcript Generation
-Complete transcript processing including CLI usage and orchestration functionality
+Whisper Transcript Generation via faster-whisper (CTranslate2).
 """
 
-import re
-import subprocess
-import sys
-import os
-import asyncio
+from __future__ import annotations
+
 import logging
+import os
+import re
+import sys
+import threading
 from pathlib import Path
-from typing import Optional, Dict, List, Callable, Any
-import whisper
-from core.config import WHISPER_MODEL, TRANSCRIPT_LANGUAGE_DETECT_MODEL
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from faster_whisper import WhisperModel
+
+from core.config import TRANSCRIPT_LANGUAGE_DETECT_MODEL, WHISPER_MODEL
 from core.transcript_generation_paraformer import ParaformerTranscriptProcessor
 
 logger = logging.getLogger(__name__)
@@ -22,6 +24,15 @@ try:
     from core.transcript_generation_whisperx import TranscriptProcessorWhisperX, WHISPERX_AVAILABLE
 except ImportError:
     WHISPERX_AVAILABLE = False
+
+# openai-whisper style aliases → faster-whisper / Hugging Face CTranslate2 ids
+_FASTER_WHISPER_MODEL_ALIASES = {
+    "turbo": "large-v3-turbo",
+    "large": "large-v3",
+}
+
+_model_cache: dict[Tuple[str, str, str], WhisperModel] = {}
+_model_lock = threading.Lock()
 
 
 def select_transcript_backend(
@@ -50,157 +61,186 @@ def summarize_transcript_sources(sources: List[str]) -> str:
 
 
 def build_whisper_initial_prompt(language: Optional[str]) -> Optional[str]:
-    """Return a style prompt for Whisper when a language benefits from steering.
-
-    Whisper uses a single `zh` language code for Chinese, and OpenAI maintainers
-    recommend `initial_prompt` to bias the transcript style toward simplified
-    or traditional script. We prefer Simplified Chinese for Chinese transcripts.
-    """
+    """Return a style prompt for Whisper when a language benefits from steering."""
     normalized = (language or "").strip().lower()
     if normalized.startswith("zh") or normalized == "chinese":
         return "以下是普通话的简体中文字幕。"
     return None
 
-def run_whisper_cli(file_path, model_name=WHISPER_MODEL, language=None, output_format="srt", output_dir=None):
-    """
-    Transcribe audio/video file using OpenAI Whisper CLI
 
-    Args:
-        file_path (str): Path to audio/video file
-        model_name (str): Whisper model to use (tiny, base, small, medium, large, turbo)
-        language (str): Language code (e.g., 'en', 'zh', 'ja') or None for auto-detection
-        output_format (str): Output format (txt, vtt, srt, tsv, json, all)
-        output_dir (str): Directory to write output files to (defaults to current directory)
+def resolve_faster_whisper_model_name(model_name: str) -> str:
+    """Map legacy openai-whisper names onto faster-whisper model ids."""
+    key = (model_name or "").strip()
+    return _FASTER_WHISPER_MODEL_ALIASES.get(key, key or WHISPER_MODEL)
 
-    Returns:
-        bool: True if successful, False if failed
+
+def _resolve_device_and_compute_type() -> Tuple[str, str]:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda", "float16"
+    except Exception:
+        pass
+    return "cpu", "int8"
+
+
+def _get_faster_whisper_model(model_name: str) -> WhisperModel:
+    resolved = resolve_faster_whisper_model_name(model_name)
+    device, compute_type = _resolve_device_and_compute_type()
+    cache_key = (resolved, device, compute_type)
+    with _model_lock:
+        cached = _model_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        logger.info(
+            "Loading faster-whisper model=%s device=%s compute_type=%s",
+            resolved,
+            device,
+            compute_type,
+        )
+        model = WhisperModel(resolved, device=device, compute_type=compute_type)
+        _model_cache[cache_key] = model
+        return model
+
+
+def _format_srt_timestamp(seconds: float) -> str:
+    total_ms = max(0, int(round(float(seconds) * 1000)))
+    hours, rem = divmod(total_ms, 3_600_000)
+    minutes, rem = divmod(rem, 60_000)
+    secs, millis = divmod(rem, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def write_faster_whisper_srt(segments: List[Any], output_path: Path) -> None:
+    """Write faster-whisper segments to an SRT file."""
+    lines: List[str] = []
+    index = 1
+    for segment in segments:
+        text = (getattr(segment, "text", None) or "").strip()
+        if not text:
+            continue
+        start = float(getattr(segment, "start", 0.0) or 0.0)
+        end = float(getattr(segment, "end", start) or start)
+        if end <= start:
+            end = start + 0.5
+        lines.append(str(index))
+        lines.append(f"{_format_srt_timestamp(start)} --> {_format_srt_timestamp(end)}")
+        lines.append(text)
+        lines.append("")
+        index += 1
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines).rstrip() + ("\n" if lines else ""), encoding="utf-8")
+
+
+def run_whisper_cli(
+    file_path,
+    model_name=WHISPER_MODEL,
+    language=None,
+    output_format="srt",
+    output_dir=None,
+):
     """
+    Transcribe audio/video with faster-whisper and write sidecar transcript files.
+
+    Kept name `run_whisper_cli` for backward compatibility with callers/tests.
+    Currently supports `srt` (primary pipeline format). Other formats fall back to SRT.
+    """
+    media_path = Path(file_path)
+    if not media_path.exists():
+        logger.error("Media file not found: %s", media_path)
+        return False
+
+    fmt = (output_format or "srt").lower()
+    if fmt not in {"srt", "all"}:
+        logger.warning("faster-whisper path currently emits SRT only; requested format=%s", fmt)
+
+    target_dir = Path(output_dir) if output_dir else media_path.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+    srt_path = target_dir / f"{media_path.stem}.srt"
+
     print(f"🎵 Transcribing: {file_path}")
-    print(f"📊 Model: {model_name}")
-    print(f"📝 Output format: {output_format}")
-
-    # Build the whisper command
-    cmd = [sys.executable, "-m", "whisper", file_path, "--model", model_name, "--output_format", output_format]
-
-    if output_dir:
-        cmd.extend(["--output_dir", str(output_dir)])
-
+    print(f"📊 Model: {resolve_faster_whisper_model_name(model_name)} (faster-whisper)")
+    print("📝 Output format: srt")
     if language:
-        cmd.extend(["--language", language])
         print(f"🌍 Language: {language}")
     else:
         print("🔍 Language: Auto-detection")
 
     initial_prompt = build_whisper_initial_prompt(language)
     if initial_prompt:
-        cmd.extend(["--initial_prompt", initial_prompt])
         print("🈶 Script preference: Simplified Chinese")
-    
+
     try:
-        print("\n⏳ Running Whisper...")
-        print("📋 Progress will be shown below:")
+        print("\n⏳ Running faster-whisper...")
         print("-" * 50)
-        
-        # Run without capturing output to show real-time progress
-        result = subprocess.run(cmd)
-        
-        if result.returncode == 0:
-            print("-" * 50)
-            print("✅ Transcription completed successfully!")
-            return True
-        else:
-            print("-" * 50)
-            print(f"❌ Transcription failed with return code: {result.returncode}")
-            return False
-            
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Command failed: {e}")
-        return False
-    except FileNotFoundError:
-        print("❌ Whisper module not found in the current Python environment.")
+        model = _get_faster_whisper_model(model_name)
+        segments_iter, info = model.transcribe(
+            str(media_path),
+            language=language,
+            task="transcribe",
+            beam_size=5,
+            vad_filter=True,
+            initial_prompt=initial_prompt,
+        )
+        segments = list(segments_iter)
+        write_faster_whisper_srt(segments, srt_path)
+        detected = getattr(info, "language", None)
+        if detected:
+            print(f"🔎 Detected language: {detected}")
+        print("-" * 50)
+        print(f"✅ Transcription completed successfully! → {srt_path.name}")
+        return srt_path.exists()
+    except Exception as exc:
+        print("-" * 50)
+        print(f"❌ Transcription failed: {exc}")
+        logger.exception("faster-whisper transcription failed for %s", media_path)
         return False
 
+
 def demonstrate_whisper():
-    """Demonstrate different Whisper usage examples"""
-    
-    print("=== OpenAI Whisper CLI Demo ===\n")
-    
-    # Check if we have a sample file
+    """Demonstrate faster-whisper usage examples."""
+    print("=== faster-whisper Demo ===\n")
     sample_file = "../video_sample.mp4"
-    
     if os.path.exists(sample_file):
         print("📁 Found sample video file!")
-        
         print("\n--- Example 1: Basic transcription (tiny model, fast) ---")
         success = run_whisper_cli(sample_file, model_name="tiny")
-        
         if success:
-            # Look for output files
             base_name = os.path.splitext(os.path.basename(sample_file))[0]
-            txt_file = f"{base_name}.txt"
-            
-            if os.path.exists(txt_file):
-                print(f"\n📄 Transcript saved to: {txt_file}")
-                # Show first few lines
-                try:
-                    with open(txt_file, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                        preview = content[:200] + "..." if len(content) > 200 else content
-                        print(f"Preview: {preview}")
-                except Exception as e:
-                    print(f"Could not read transcript: {e}")
-        
-        print("\n--- Example 2: Different formats ---")
-        print("💡 You can also generate different output formats:")
-        
+            srt_file = f"{base_name}.srt"
+            if os.path.exists(srt_file):
+                print(f"\n📄 Transcript saved to: {srt_file}")
     else:
         print("📂 No sample file found. Here are usage examples:")
-    
+
     print("\n🎯 Usage Examples:")
     print("1. Basic transcription:")
-    print("   whisper audio.mp3")
-    
+    print("   python -m core.transcript_generation_whisper audio.mp3")
     print("\n2. Specify model size:")
-    print("   whisper audio.mp3 --model small")
-    
-    print("\n3. Specify language:")
-    print("   whisper audio.mp3 --language en")
-    
-    print("\n4. Multiple output formats:")
-    print("   whisper audio.mp3 --output_format all")
-    
-    print("\n5. Subtitle format:")
-    print("   whisper video.mp4 --output_format srt")
-    
+    print("   python -m core.transcript_generation_whisper audio.mp3 small")
     print("\n📏 Available Models (speed vs accuracy):")
-    models = [
+    for model, desc in [
         ("tiny", "Fastest, least accurate"),
         ("base", "Good balance"),
         ("small", "Better accuracy"),
         ("medium", "High accuracy"),
-        ("large", "Best accuracy, slowest"),
-        ("turbo", "Fast and accurate")
-    ]
-    
-    for model, desc in models:
+        ("large", "Maps to large-v3"),
+        ("turbo", "Maps to large-v3-turbo"),
+    ]:
         print(f"   • {model}: {desc}")
-    
-    print("\n📋 Output Formats:")
-    formats = ["txt", "vtt", "srt", "tsv", "json", "all"]
-    for fmt in formats:
-        print(f"   • {fmt}")
+
 
 def simple_transcribe(audio_file, model="base"):
-    """Simple function to transcribe an audio file"""
+    """Simple function to transcribe an audio file."""
     if not os.path.exists(audio_file):
         print(f"❌ File not found: {audio_file}")
         return False
-    
     return run_whisper_cli(audio_file, model_name=model)
 
 
 class TranscriptProcessor:
-    """Handles all transcript-related operations"""
+    """Handles all transcript-related operations."""
 
     def __init__(
         self,
@@ -219,7 +259,11 @@ class TranscriptProcessor:
         self._language_detector = None
 
         if enable_diarization and not WHISPERX_AVAILABLE:
-            logger.warning("⚠️  Speaker diarization requested but WhisperX is not installed. Falling back to openai-whisper (no speaker labels). Run: uv sync --extra speakers")
+            logger.warning(
+                "⚠️  Speaker diarization requested but WhisperX is not installed. "
+                "Falling back to faster-whisper (no speaker labels). "
+                "Run: uv sync --extra speakers"
+            )
 
         self.whisperx_processor = None
         if self.use_whisperx:
@@ -233,57 +277,64 @@ class TranscriptProcessor:
             logger.info(f"🈶 Chinese ASR backend: Paraformer ({self.paraformer_processor.project_dir})")
         else:
             logger.warning(
-                "⚠️  Paraformer is unavailable; Chinese audio will fall back to Whisper. "
+                "⚠️  Paraformer is unavailable; Chinese audio will fall back to faster-whisper. "
                 f"Reason: {self.paraformer_processor.availability_error()}"
             )
 
-    async def process_transcripts(self,
-                                subtitle_path: str,
-                                video_files: List[str] or str,
-                                force_whisper: bool,
-                                progress_callback: Optional[Callable[[str, float], None]]) -> Dict[str, Any]:
-        """Process transcripts - either use existing subtitles or generate with whisper/whisperx"""
-
+    async def process_transcripts(
+        self,
+        subtitle_path: str,
+        video_files: List[str] or str,
+        force_whisper: bool,
+        progress_callback: Optional[Callable[[str, float], None]],
+    ) -> Dict[str, Any]:
+        """Process transcripts - either use existing subtitles or generate locally."""
         has_existing = subtitle_path and os.path.exists(subtitle_path)
 
         if force_whisper or not has_existing:
             logger.info("📝 Generating transcripts locally with automatic language routing")
             return await self._generate_routed_transcripts(video_files, progress_callback)
-        else:
-            # Scenario 2: Use existing transcript
-            if self.whisperx_processor and self.enable_diarization:
-                if self._has_speaker_labels(subtitle_path):
-                    logger.info("📥 Source transcript already has speaker labels, skipping diarization")
-                    return {
-                        'source': 'existing_diarized',
-                        'transcript_path': subtitle_path if isinstance(video_files, str) else '',
-                        'transcript_parts': [] if isinstance(video_files, str) else self._get_existing_transcript_parts(video_files)
-                    }
-                else:
-                    logger.info("⚡ Using WhisperX diarization on existing transcript")
-                    return await self._add_speakers_to_existing(video_files, progress_callback)
-            else:
-                logger.info("📥 Using existing subtitles")
-                return {
-                    'source': 'bilibili' if 'bilibili' in subtitle_path else 'existing',
-                    'transcript_path': subtitle_path if isinstance(video_files, str) else '',
-                    'transcript_parts': [] if isinstance(video_files, str) else self._get_existing_transcript_parts(video_files)
-                }
 
-    def _get_language_detector(self):
+        if self.whisperx_processor and self.enable_diarization:
+            if self._has_speaker_labels(subtitle_path):
+                logger.info("📥 Source transcript already has speaker labels, skipping diarization")
+                return {
+                    "source": "existing_diarized",
+                    "transcript_path": subtitle_path if isinstance(video_files, str) else "",
+                    "transcript_parts": [] if isinstance(video_files, str) else self._get_existing_transcript_parts(video_files),
+                }
+            logger.info("⚡ Using WhisperX diarization on existing transcript")
+            return await self._add_speakers_to_existing(video_files, progress_callback)
+
+        logger.info("📥 Using existing subtitles")
+        return {
+            "source": "bilibili" if "bilibili" in subtitle_path else "existing",
+            "transcript_path": subtitle_path if isinstance(video_files, str) else "",
+            "transcript_parts": [] if isinstance(video_files, str) else self._get_existing_transcript_parts(video_files),
+        }
+
+    def _get_language_detector(self) -> WhisperModel:
         if self._language_detector is None:
-            self._language_detector = whisper.load_model(self.language_detection_model)
+            self._language_detector = _get_faster_whisper_model(self.language_detection_model)
         return self._language_detector
 
     def _detect_transcript_language(self, media_path: str) -> str:
         media_path = str(media_path)
         try:
             detector = self._get_language_detector()
-            audio = whisper.load_audio(media_path)
-            audio = whisper.pad_or_trim(audio)
-            mel = whisper.log_mel_spectrogram(audio).to(detector.device)
-            _, probs = detector.detect_language(mel)
-            detected_language, confidence = max(probs.items(), key=lambda item: item[1])
+            # Short beam + VAD keeps language sniffing cheap before full transcription.
+            _segments, info = detector.transcribe(
+                media_path,
+                task="transcribe",
+                beam_size=1,
+                vad_filter=True,
+                language=None,
+            )
+            # Consume at most a couple segments so language metadata is populated.
+            for _ in zip(_segments, range(2)):
+                pass
+            detected_language = (getattr(info, "language", None) or "en").lower()
+            confidence = float(getattr(info, "language_probability", 0.0) or 0.0)
             logger.info(
                 f"🔎 Transcript language for {Path(media_path).name}: "
                 f"{detected_language} ({confidence:.1%})"
@@ -367,11 +418,11 @@ class TranscriptProcessor:
                     )
                     if success:
                         srt_path = str(video_dir / f"{video_path.stem}.srt")
-                        logger.info(f"✅ Whisper generated: {Path(srt_path).name}")
+                        logger.info(f"✅ faster-whisper generated: {Path(srt_path).name}")
             except Exception as e:
                 if backend == "paraformer":
                     logger.warning(
-                        f"⚠️  Paraformer failed for {video_path.name} ({e}). Falling back to Whisper."
+                        f"⚠️  Paraformer failed for {video_path.name} ({e}). Falling back to faster-whisper."
                     )
                     source = "whisper_fallback"
                     success = run_whisper_cli(
@@ -383,7 +434,7 @@ class TranscriptProcessor:
                     )
                     if success:
                         srt_path = str(video_dir / f"{video_path.stem}.srt")
-                        logger.info(f"✅ Whisper fallback generated: {Path(srt_path).name}")
+                        logger.info(f"✅ faster-whisper fallback generated: {Path(srt_path).name}")
                 else:
                     logger.error(f"❌ {backend} failed for {video_path.name}: {e}")
 
@@ -394,30 +445,29 @@ class TranscriptProcessor:
                 logger.error(f"❌ Transcript generation failed for {video_path.name}")
 
         return {
-            'source': summarize_transcript_sources(transcript_sources),
-            'transcript_path': transcript_parts[0] if len(transcript_parts) == 1 else '',
-            'transcript_parts': transcript_parts,
+            "source": summarize_transcript_sources(transcript_sources),
+            "transcript_path": transcript_parts[0] if len(transcript_parts) == 1 else "",
+            "transcript_parts": transcript_parts,
         }
-    
-    async def _generate_whisper_transcripts(self, 
-                                          video_files: List[str] or str,
-                                          progress_callback: Optional[Callable[[str, float], None]]) -> Dict[str, Any]:
-        """Generate transcripts using Whisper"""
-        
+
+    async def _generate_whisper_transcripts(
+        self,
+        video_files: List[str] or str,
+        progress_callback: Optional[Callable[[str, float], None]],
+    ) -> Dict[str, Any]:
+        """Generate transcripts using faster-whisper."""
         if isinstance(video_files, str):
             video_files = [video_files]
-        
+
         transcript_parts = []
         total_files = len(video_files)
-        
+
         for i, video_file in enumerate(video_files):
-            # Update progress
             if progress_callback:
-                base_progress = 35 + (i / total_files) * 13  # 35-48% range
+                base_progress = 35 + (i / total_files) * 13
                 progress_callback(f"Generating transcript {i+1}/{total_files}...", base_progress)
-            
+
             logger.info(f"🎙️  Generating transcript for: {Path(video_file).name}")
-            
             video_path = Path(video_file)
             video_dir = video_path.parent
 
@@ -426,7 +476,7 @@ class TranscriptProcessor:
                 model_name=self.whisper_model,
                 language=self.language,
                 output_format="srt",
-                output_dir=str(video_dir)
+                output_dir=str(video_dir),
             )
 
             if success:
@@ -437,17 +487,19 @@ class TranscriptProcessor:
                 else:
                     logger.warning(f"⚠️  SRT file not found for {video_path.name}")
             else:
-                logger.error(f"❌ Whisper failed for {video_path.name}")
-        
+                logger.error(f"❌ faster-whisper failed for {video_path.name}")
+
         return {
-            'source': 'whisper',
-            'transcript_path': transcript_parts[0] if len(transcript_parts) == 1 else '',
-            'transcript_parts': transcript_parts
+            "source": "whisper",
+            "transcript_path": transcript_parts[0] if len(transcript_parts) == 1 else "",
+            "transcript_parts": transcript_parts,
         }
-    
-    async def _generate_whisperx_transcripts(self,
-                                             video_files: List[str] or str,
-                                             progress_callback: Optional[Callable[[str, float], None]]) -> Dict[str, Any]:
+
+    async def _generate_whisperx_transcripts(
+        self,
+        video_files: List[str] or str,
+        progress_callback: Optional[Callable[[str, float], None]],
+    ) -> Dict[str, Any]:
         """Generate transcripts using WhisperX (Scenario 1)."""
         if isinstance(video_files, str):
             video_files = [video_files]
@@ -470,14 +522,16 @@ class TranscriptProcessor:
                 logger.error(f"❌ WhisperX failed for {Path(video_file).name}")
 
         return {
-            'source': 'whisperx',
-            'transcript_path': transcript_parts[0] if len(transcript_parts) == 1 else '',
-            'transcript_parts': transcript_parts,
+            "source": "whisperx",
+            "transcript_path": transcript_parts[0] if len(transcript_parts) == 1 else "",
+            "transcript_parts": transcript_parts,
         }
 
-    async def _add_speakers_to_existing(self,
-                                        video_files: List[str] or str,
-                                        progress_callback: Optional[Callable[[str, float], None]]) -> Dict[str, Any]:
+    async def _add_speakers_to_existing(
+        self,
+        video_files: List[str] or str,
+        progress_callback: Optional[Callable[[str, float], None]],
+    ) -> Dict[str, Any]:
         """Add speaker labels to existing SRT files via diarization (Scenario 2)."""
         if isinstance(video_files, str):
             video_files = [video_files]
@@ -504,61 +558,49 @@ class TranscriptProcessor:
             transcript_parts.append(updated_srt)
 
         return {
-            'source': 'whisperx_diarized',
-            'transcript_path': transcript_parts[0] if len(transcript_parts) == 1 else '',
-            'transcript_parts': transcript_parts,
+            "source": "whisperx_diarized",
+            "transcript_path": transcript_parts[0] if len(transcript_parts) == 1 else "",
+            "transcript_parts": transcript_parts,
         }
 
     def _has_speaker_labels(self, srt_path: str) -> bool:
-        """Return True if the SRT file already contains [SpeakerName] prefixes.
-
-        WhisperX writes speaker labels as '[SPEAKER_00] text' or '[Sam Altman] text' —
-        the bracket content always starts with an uppercase letter.
-        YouTube sound annotations like '[laughter]' or '[applause]' are lowercase
-        and must not be treated as speaker labels.
-        """
+        """Return True if the SRT file already contains [SpeakerName] prefixes."""
         try:
-            with open(srt_path, 'r', encoding='utf-8') as f:
+            with open(srt_path, "r", encoding="utf-8") as f:
                 for line in f:
-                    if re.match(r'^\[[A-Z]', line.strip()):
+                    if re.match(r"^\[[A-Z]", line.strip()):
                         return True
         except (OSError, IOError):
             pass
         return False
 
     def _get_existing_transcript_parts(self, video_files: List[str]) -> List[str]:
-        """Get existing transcript parts (they should already exist from splitting)"""
+        """Get existing transcript parts (they should already exist from splitting)."""
         transcript_parts = []
-        
         for video_file in video_files:
             video_path = Path(video_file)
             srt_path = video_path.parent / f"{video_path.stem}.srt"
-            
             if srt_path.exists():
                 transcript_parts.append(str(srt_path))
             else:
                 logger.warning(f"⚠️  Expected transcript not found: {srt_path}")
-        
         return transcript_parts
 
 
 def main():
-    """Main function"""
-    
-    # Check command line arguments
+    """Main function."""
     if len(sys.argv) > 1:
         audio_file = sys.argv[1]
         model = sys.argv[2] if len(sys.argv) > 2 else "base"
-        
         print(f"🎵 Transcribing file: {audio_file}")
         simple_transcribe(audio_file, model)
     else:
-        # Run demonstration
         demonstrate_whisper()
-    
+
     print("\n🚀 To transcribe your own file:")
-    print("   python main.py your_audio_file.mp3 [model]")
-    print("   Example: python main.py speech.wav tiny")
+    print("   python -m core.transcript_generation_whisper your_audio_file.mp3 [model]")
+    print("   Example: python -m core.transcript_generation_whisper speech.wav tiny")
+
 
 if __name__ == "__main__":
     main()

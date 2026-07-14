@@ -17,6 +17,12 @@
 
 ## 📢 最新动态
 
+- **2026-07-15**:
+  - 新增 React Web UI（`web_api.py` + `web_frontend/`），默认端口 `8502`；偏好设置持久化到 `data/openclip.db`
+  - 支持 [Docker Compose 一键部署](#docker-部署)（含带 libass 的 ffmpeg）；挂载 `jobs` / `processed_videos` / `data`，默认时区 `Asia/Shanghai`
+  - 任务仍以 `jobs/*.json` 落盘；服务重启后中断的处理中任务会标记为失败并可重试
+  - 编辑器可识别本机绝对路径，便于 Docker 与本地共用同一套 `processed_videos`
+  - Cookies 文件可在 Web UI 上传；本地 ASR 默认 faster-whisper，中文 Paraformer 仍为可选 extra
 - **2026-05-20**:
   - 新增片段时长预设：Streamlit 与 CLI 支持选择 `Auto (30s-3m)`、`30s-60s`、`60s-90s`、`90s-3m`、`3m-5m`
 - **2026-04-23**:
@@ -51,7 +57,7 @@
   - 新增[说话人识别功能（预览版）](#speaker-identification)— 使用 `--speaker-references` 为访谈/座谈/播客视频自动标注说话人姓名
   - 优化 AI 提示词，减少时间戳格式混淆（如 `00:01:55` vs `01:55:00`）
 - **2025-02-26**:
-  - 默认 Qwen 模型从旧版 qwen-turbo 切换至 qwen3.6-plus
+  - 默认 Qwen 模型从旧版 qwen-turbo 切换至 qwen3.7-plus
   - 优化 AI 提示词，减少时间戳幻觉，提升标题质量
 
 </details>
@@ -68,13 +74,13 @@
 
 ## ✨ 特性
 - **灵活输入**：支持 Bilibili、YouTube URL 或本地视频文件
-- **智能转录**：优先使用平台字幕；本地 ASR 会自动按语言路由，英文使用 Whisper，中文使用 Paraformer
+- **智能转录**：优先使用平台字幕；本地 ASR 会自动按语言路由，英文使用 faster-whisper，中文使用 Paraformer
 - **说话人识别**（预览版）：自动识别谁在说话，将真实姓名标注到字幕中，适合访谈、座谈、辩论和播客
 - **AI 分析**：基于内容、互动和娱乐价值识别精彩时刻；支持 `--user-intent` 引导 AI 聚焦特定关注点
 - **剪辑生成**：提取最精彩时刻为独立视频剪辑，自动生成字幕文件、标题和封面图片
 - **字幕烧录**（可选）：将 SRT 字幕硬烧到视频画面中，可选通过当前选定的 LLM 提供商翻译成目标语言后烧录双语字幕
 - **背景上下文**：可选的添加背景信息（如主播姓名等）以获得更好的分析
-- **三界面支持**：Streamlit 网页界面，Agent Skills 和命令行界面，满足不同用户需求
+- **三界面支持**：React Web UI（推荐）、Streamlit、Agent Skills 与命令行，满足不同用户需求
 - **Agent Skills**：内置 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 和 [TRAE](https://www.trae.ai/) agent skill，用自然语言即可处理视频
 
 ## 📋 前置要求
@@ -97,7 +103,7 @@
   </details>
 
 - **LLM API Key / 接口配置**（选择其一）
-  - **Qwen API Key** - 从[阿里云](https://dashscope.aliyun.com/)获取密钥（默认使用 qwen3.6-plus 模型）
+  - **Qwen API Key** - 从[阿里云](https://dashscope.aliyun.com/)获取密钥（默认使用 qwen3.7-plus 模型）
   - **OpenRouter API Key** - 从[OpenRouter](https://openrouter.ai/)获取密钥（默认使用 stepfun/step-3.5-flash:free 模型）
   - **GLM API Key** - 从[智谱AI](https://open.bigmodel.cn/)获取密钥（默认使用 glm-4.7 模型）
   - **MiniMax API Key** - 从[MiniMax](https://platform.minimaxi.com/)获取密钥（默认使用 MiniMax-M2.7 模型）
@@ -115,7 +121,7 @@
 
 - **Python 3.11+** - 如果系统未安装，uv 会自动下载
 - **yt-dlp** - 用于从 Bilibili、YouTube 等平台下载视频
-- **Whisper** - 用于语音转文字
+- **faster-whisper** - 用于语音转文字（CTranslate2 加速）
 - 其他 Python 依赖（moviepy、streamlit 等）
 
 可选 extra：
@@ -125,7 +131,45 @@
 
 ## 🚀 快速开始
 
-### 1. 克隆和设置
+### Docker 部署
+
+适合服务器 / 本机一键启动 Web UI（含字幕烧录所需的带 libass 的 ffmpeg）：
+
+```bash
+git clone https://github.com/linzzzzzz/openclip.git
+cd openclip
+
+cp .env.example .env
+# 编辑 .env，至少填写一组 LLM API Key（如 QWEN_API_KEY）
+
+docker compose up -d --build
+# 打开 http://127.0.0.1:8502/
+
+# 若构建时访问 deb.debian.org 失败，可换国内镜像再构建：
+# APT_MIRROR=mirrors.aliyun.com docker compose build --no-cache
+# docker compose up -d
+```
+
+数据会持久化到：
+- `./jobs` — 任务历史（每个任务一个 JSON，不在 SQLite 里）
+- `./processed_videos` — 下载与剪辑输出
+- `./data` — 偏好设置等本地数据库
+- Docker volume `openclip-cache` — Whisper / HuggingFace 模型缓存
+
+时区默认 `Asia/Shanghai`（任务时间戳 / 日志）。可在 `.env` 中设置 `TZ=...` 覆盖。
+
+常用命令：
+
+```bash
+docker compose logs -f openclip
+docker compose down
+```
+
+> 默认镜像不含 Paraformer / WhisperX 等重量级 optional extra。需要时请在本机 `uv sync --extra …` 运行，或自行扩展 Dockerfile。
+>
+> 本机与 Docker 共用 `processed_videos` 时，编辑器会自动把本机绝对路径映射到容器内路径。
+
+### 1. 克隆和设置（本地 uv）
 
 ```bash
 # 克隆仓库
@@ -140,7 +184,7 @@ uv sync
 <details>
 <summary>🈶 启用 Paraformer 中文本地 ASR（可选）</summary>
 
-本地 ASR 会按语言自动路由：英文使用 Whisper，中文优先使用 Paraformer。若要启用 Paraformer，请安装额外依赖：
+本地 ASR 会按语言自动路由：英文使用 faster-whisper，中文优先使用 Paraformer。若要启用 Paraformer，请安装额外依赖：
 
 ```bash
 uv sync --extra paraformer
@@ -152,7 +196,7 @@ OpenClip 默认使用仓库内置的 helper：`third_party/funasr-paraformer`。
 export PARAFORMER_PROJECT_DIR=/path/to/funasr-paraformer
 ```
 
-如果 Paraformer 依赖或 helper 不可用，OpenClip 会自动回退到 Whisper。
+如果 Paraformer 依赖或 helper 不可用，OpenClip 会自动回退到 faster-whisper。
 
 </details>
 
@@ -179,7 +223,28 @@ export CUSTOM_OPENAI_MODEL=Qwen/Qwen2.5-7B-Instruct
 
 ### 3. 运行流水线
 
-#### 选项 A：使用 Streamlit 网页界面
+#### 选项 A：使用 React 网页界面（推荐）
+
+先构建前端，再启动 API：
+
+```bash
+cd web_frontend && npm install && npm run build && cd ..
+uv run python web_api.py
+```
+
+应用启动后访问 `http://127.0.0.1:8502`。
+
+开发时也可以前后端分开跑：
+
+```bash
+# 终端 1
+uv run python web_api.py
+
+# 终端 2
+cd web_frontend && npm run dev
+```
+
+#### 选项 B：使用 Streamlit 网页界面
 
 **启动 Streamlit 应用：**
 ```bash
@@ -409,7 +474,7 @@ uv run python video_orchestrator.py \
 | `--cookies` | Netscape 格式 `cookies.txt` 文件路径；提供后优先于 `--browser` | 无 |
 | `--js-runtime` | 仅用于 YouTube 下载的 JavaScript 运行时策略（`auto`/`deno`/`node`/`none`） | `auto` |
 | `--js-runtime-path` | 仅用于 YouTube 下载的 JavaScript 运行时可执行文件路径（高级选项） | 无 |
-| `--force-whisper` | 强制使用本地 ASR 转录（忽略平台字幕）；英文使用 Whisper，中文使用 Paraformer | 关 |
+| `--force-whisper` | 强制使用本地 ASR 转录（忽略平台字幕）；英文使用 faster-whisper，中文使用 Paraformer | 关 |
 | `--use-background` | 使用背景信息辅助分析 | 关 |
 | `--normalize-boundaries` / `--no-normalize-boundaries` | 剪辑生成时将开始/结束时间对齐到附近字幕边界；优先句子边界，其次字幕间停顿。默认开启，可用 `--no-normalize-boundaries` 关闭 | 开 |
 | `--deep-optimize` | 启用更深入的片段复审与优化流程，提升片段边界和独立成段质量，但处理更慢。详见[开启 `--deep-optimize` 时](#开启---deep-optimize-时) | 关 |

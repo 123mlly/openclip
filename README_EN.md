@@ -17,6 +17,12 @@ Give it a video URL or local file, and it handles the full pipeline: **Download 
 
 ## 📢 News
 
+- **2026-07-15**:
+  - Added React Web UI (`web_api.py` + `web_frontend/`), default port `8502`; preferences persist to `data/openclip.db`
+  - Added [Docker Compose one-command deploy](#docker) (ffmpeg with libass); mounts `jobs` / `processed_videos` / `data`; default timezone `Asia/Shanghai`
+  - Jobs remain `jobs/*.json` on disk; interrupted processing jobs are marked failed after restart and can be retried
+  - Editor remaps host absolute paths so Docker and local runs can share the same `processed_videos`
+  - Cookies file upload in Web UI; local ASR defaults to faster-whisper, with Chinese Paraformer still an optional extra
 - **2026-05-20**:
   - Added clip length presets: Streamlit and CLI now support `Auto (30s-3m)`, `30s-60s`, `60s-90s`, `90s-3m`, and `3m-5m`
 - **2026-04-23**:
@@ -51,7 +57,7 @@ Give it a video URL or local file, and it handles the full pipeline: **Download 
   - Added [speaker identification (Preview)](#speaker-identification) — use `--speaker-references` to automatically label speakers by name in transcripts for interviews, panels, and podcasts
   - Improved AI prompts to reduce timestamp format confusion (e.g., `00:01:55` vs `01:55:00`)
 - **2025-02-26**:
-  - Switched default Qwen model from legacy qwen-turbo to qwen3.6-plus
+  - Switched default Qwen model from legacy qwen-turbo to qwen3.7-plus
   - Improved AI prompts to reduce timestamp hallucination and enhance title quality
 
 </details>
@@ -74,7 +80,7 @@ Give it a video URL or local file, and it handles the full pipeline: **Download 
 - **Clip Generation**: Extracts the most engaging moments as standalone video clips, automatically generating subtitle files, titles, and cover images
 - **Subtitle Burning** (optional): Hard-burns SRT subtitles into the video frame; optionally translates to a target language via the selected LLM provider and burns both tracks as bilingual subtitles
 - **Background Context**: Optionally add background information (e.g., streamer names) for better analysis
-- **Triple Interface Support**: Streamlit web interface, Agent Skills, and command-line interface for different user needs
+- **Triple Interface Support**: React Web UI (recommended), Streamlit, Agent Skills, and CLI for different user needs
 - **Agent Skills**: Built-in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [TRAE](https://www.trae.ai/) agent skills for processing videos with natural language
 
 ## 📋 Prerequisites
@@ -100,7 +106,7 @@ Give it a video URL or local file, and it handles the full pipeline: **Download 
   </details>
 
 - **LLM API Key / Endpoint Config** (choose one)
-  - **Qwen API Key** - Get your key from [Alibaba Cloud](https://dashscope.aliyun.com/) (uses qwen3.6-plus model by default)
+  - **Qwen API Key** - Get your key from [Alibaba Cloud](https://dashscope.aliyun.com/) (uses qwen3.7-plus model by default)
   - **OpenRouter API Key** - Get your key from [OpenRouter](https://openrouter.ai/) (uses stepfun/step-3.5-flash:free model by default)
   - **GLM API Key** - Get your key from [ZhipuAI](https://open.bigmodel.cn/) (uses glm-4.7 model by default)
   - **MiniMax API Key** - Get your key from [MiniMax](https://platform.minimaxi.com/) (uses MiniMax-M2.7 model by default)
@@ -125,7 +131,43 @@ Optional extras:
 
 ## 🚀 Quick Start
 
-### 1. Clone and Setup
+### Docker
+
+One-command Web UI deploy (image includes ffmpeg with libass for subtitle burning):
+
+```bash
+git clone https://github.com/linzzzzzz/openclip.git
+cd openclip
+
+cp .env.example .env
+# Edit .env and set at least one LLM API key (e.g. QWEN_API_KEY)
+
+docker compose up -d --build
+# Open http://127.0.0.1:8502/
+
+# If apt downloads from deb.debian.org fail, rebuild with a mirror:
+# APT_MIRROR=mirrors.aliyun.com docker compose build --no-cache
+# docker compose up -d
+```
+
+Persisted paths:
+- `./jobs` — job history (one JSON file per job; not stored in SQLite)
+- `./processed_videos` — downloads and clip outputs
+- `./data` — preferences SQLite DB
+- Docker volume `openclip-cache` — Whisper / HuggingFace model cache
+
+Timezone defaults to `Asia/Shanghai` (job timestamps / logs). Override with `TZ=...` in `.env`.
+
+```bash
+docker compose logs -f openclip
+docker compose down
+```
+
+> The default image does not include heavy optional extras (Paraformer / WhisperX). Use local `uv sync --extra …` or extend the Dockerfile if you need them.
+>
+> When sharing `processed_videos` between host and Docker, the editor remaps host absolute paths into the container.
+
+### 1. Clone and Setup (local uv)
 
 ```bash
 # Clone the repository
@@ -140,7 +182,7 @@ uv sync
 <details>
 <summary>🈶 Enable Paraformer For Local Chinese ASR (Optional)</summary>
 
-Local ASR routes automatically by language: English uses Whisper and Chinese prefers Paraformer. To enable Paraformer, install the extra dependencies:
+Local ASR routes automatically by language: English uses faster-whisper and Chinese prefers Paraformer. To enable Paraformer, install the extra dependencies:
 
 ```bash
 uv sync --extra paraformer
@@ -179,7 +221,28 @@ Notes:
 
 ### 3. Run the Pipeline
 
-#### Option A: Using Streamlit Web Interface
+#### Option A: Using React Web Interface (recommended)
+
+Build the frontend, then start the API:
+
+```bash
+cd web_frontend && npm install && npm run build && cd ..
+uv run python web_api.py
+```
+
+Open `http://127.0.0.1:8502` after the server starts.
+
+For local UI development you can also run them separately:
+
+```bash
+# Terminal 1
+uv run python web_api.py
+
+# Terminal 2
+cd web_frontend && npm run dev
+```
+
+#### Option B: Using Streamlit Web Interface
 
 **Start Streamlit app:**
 ```bash
@@ -409,7 +472,7 @@ Remote video downloads sometimes hit login checks, bot protection, or platform r
 | `--cookies` | Path to a Netscape-format `cookies.txt` file; takes precedence over `--browser` | None |
 | `--js-runtime` | JavaScript runtime strategy for YouTube downloads only (`auto`/`deno`/`node`/`none`) | `auto` |
 | `--js-runtime-path` | Path to the JavaScript runtime executable for YouTube only (advanced) | None |
-| `--force-whisper` | Force local ASR transcription (ignore platform subtitles); English uses Whisper and Chinese uses Paraformer | Off |
+| `--force-whisper` | Force local ASR transcription (ignore platform subtitles); English uses faster-whisper and Chinese uses Paraformer | Off |
 | `--use-background` | Use background info for analysis | Off |
 | `--normalize-boundaries` / `--no-normalize-boundaries` | Align clip starts and ends to nearby subtitle boundaries during clip generation; prefers sentence boundaries first and subtitle-gap pauses second. Enabled by default, disable with `--no-normalize-boundaries` | On |
 | `--deep-optimize` | Run the deeper clip review and refinement workflow to improve boundaries and standalone quality, at the cost of slower processing. See [With `--deep-optimize`](#with---deep-optimize) | Off |

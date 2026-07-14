@@ -95,6 +95,33 @@ class JobManager:
         # Load existing jobs from disk
         self._load_jobs()
     
+    @staticmethod
+    def _is_editor_rerender_job(job: Job) -> bool:
+        return (job.options or {}).get("kind") == "editor_rerender"
+
+    def _mark_interrupted_processing_job(self, job: Job) -> None:
+        """
+        Persist interrupt state after a process restart.
+
+        Background threads do not survive restart. If we only flip status in memory,
+        list_jobs (disk) keeps showing zombie "processing" progress forever.
+        """
+        if self._is_editor_rerender_job(job):
+            # Editor resume flow expects pending + this exact step message.
+            job.status = JobStatus.PENDING
+            job.current_step = "Interrupted - ready to restart"
+            job.error = None
+            self.active_jobs[job.id] = job
+            logger.info(f"Interrupted editor job {job.id} marked recoverable")
+        else:
+            # Pipeline jobs: terminal failed so the UI offers Retry immediately.
+            job.status = JobStatus.FAILED
+            job.error = "Interrupted by server restart"
+            job.current_step = "Interrupted by server restart"
+            job.completed_at = datetime.now()
+            logger.info(f"Interrupted job {job.id} marked failed")
+        self._save_job(job)
+
     def _load_jobs(self):
         """Load jobs from disk on startup"""
         for job_file in self.jobs_dir.glob("*.json"):
@@ -102,13 +129,10 @@ class JobManager:
                 with open(job_file, 'r') as f:
                     data = json.load(f)
                 job = Job.from_dict(data)
-                
-                # Only load jobs that are not completed/failed/cancelled
-                if job.status in [JobStatus.PENDING, JobStatus.PROCESSING]:
-                    # Reset processing jobs to pending (they were interrupted)
-                    if job.status == JobStatus.PROCESSING:
-                        job.status = JobStatus.PENDING
-                        job.current_step = "Interrupted - ready to restart"
+
+                if job.status == JobStatus.PROCESSING:
+                    self._mark_interrupted_processing_job(job)
+                elif job.status == JobStatus.PENDING:
                     self.active_jobs[job.id] = job
                     logger.info(f"Loaded job {job.id} with status {job.status.value}")
             except Exception as e:

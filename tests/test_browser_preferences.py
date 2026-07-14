@@ -61,16 +61,15 @@ def test_build_preferences_payload_uses_allowlist_and_excludes_sensitive_fields(
         "model": "gpt",
         "base_url": "https://example.com",
     }
+    assert prefs["output_dir"] == "processed_videos"
+    assert prefs["user_intent"] == "find sam"
     for excluded in [
         "api_key",
         "video_source",
         "cookies_file",
         "custom_prompt_file",
-        "custom_prompt_text",
         "speaker_references_dir",
         "processing_result",
-        "output_dir",
-        "user_intent",
     ]:
         assert excluded not in prefs
 

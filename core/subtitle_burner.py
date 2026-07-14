@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from core.config import (
     API_KEY_ENV_VARS,
@@ -582,6 +582,188 @@ class SubtitleBurner:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    @classmethod
+    def _ffmpeg_has_filter(cls, name: str) -> bool:
+        cached = getattr(cls, "_ffmpeg_filter_cache", None)
+        if cached is None:
+            cached = {}
+            cls._ffmpeg_filter_cache = cached
+        if name in cached:
+            return cached[name]
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-filters"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            supported = False
+            for line in (result.stdout or "").splitlines():
+                parts = line.split()
+                # Filter table rows look like: " .. ass              V->V  ..."
+                if len(parts) >= 2 and parts[1] == name:
+                    supported = True
+                    break
+            cached[name] = supported
+        except (FileNotFoundError, OSError):
+            cached[name] = False
+        return cached[name]
+
+    @classmethod
+    def ffmpeg_supports_subtitle_burn(cls) -> bool:
+        return cls._ffmpeg_has_filter("ass") or cls._ffmpeg_has_filter("subtitles")
+
+    def _srt_timestamp_to_seconds(self, value: str) -> float:
+        normalized = value.strip().replace(",", ".")
+        parts = normalized.split(":")
+        if len(parts) == 3:
+            hours, minutes, seconds = parts
+            return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+        if len(parts) == 2:
+            minutes, seconds = parts
+            return int(minutes) * 60 + float(seconds)
+        return float(normalized)
+
+    def _render_subtitle_overlay_image(
+        self,
+        text_lines: list[str],
+        frame_width: int,
+        *,
+        font_size: int,
+    ):
+        """Render a transparent RGBA image for subtitle overlays."""
+        font_path = find_best_font(
+            "zh" if any(_CJK_RE.search(line or "") for line in text_lines) else "default",
+            prefer_bold=False,
+            allow_generic_fallback=True,
+        )
+        try:
+            font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
+        except OSError:
+            font = ImageFont.load_default()
+
+        padding_x = max(24, frame_width // 40)
+        padding_y = max(12, font_size // 3)
+        line_gap = max(6, font_size // 6)
+        max_text_width = max(80, frame_width - padding_x * 2)
+
+        draw_probe = ImageDraw.Draw(Image.new("RGBA", (8, 8), (0, 0, 0, 0)))
+        wrapped_lines: list[str] = []
+        for raw_line in text_lines:
+            line = (raw_line or "").replace("\n", " ").strip()
+            if not line:
+                continue
+            current = ""
+            for char in line:
+                candidate = f"{current}{char}"
+                bbox = draw_probe.textbbox((0, 0), candidate, font=font)
+                if bbox[2] - bbox[0] <= max_text_width or not current:
+                    current = candidate
+                else:
+                    wrapped_lines.append(current)
+                    current = char
+            if current:
+                wrapped_lines.append(current)
+        if not wrapped_lines:
+            wrapped_lines = [" "]
+
+        line_sizes = [draw_probe.textbbox((0, 0), line, font=font) for line in wrapped_lines]
+        text_width = max(box[2] - box[0] for box in line_sizes)
+        text_height = sum(box[3] - box[1] for box in line_sizes) + line_gap * (len(wrapped_lines) - 1)
+        image_width = min(frame_width, text_width + padding_x * 2)
+        image_height = text_height + padding_y * 2
+        image = Image.new("RGBA", (image_width, image_height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+
+        layout = self.subtitle_style_config.normalized()
+        if layout.background_style != "none":
+            alpha = 150 if layout.background_style == "light_box" else 200
+            draw.rounded_rectangle(
+                (0, 0, image_width - 1, image_height - 1),
+                radius=12,
+                fill=(0, 0, 0, alpha),
+            )
+
+        y = padding_y
+        for line, box in zip(wrapped_lines, line_sizes):
+            line_w = box[2] - box[0]
+            line_h = box[3] - box[1]
+            x = (image_width - line_w) // 2
+            for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1)):
+                draw.text((x + dx, y + dy), line, font=font, fill=(0, 0, 0, 220))
+            draw.text((x, y), line, font=font, fill=(255, 255, 255, 255))
+            y += line_h + line_gap
+        return image
+
+    def _burn_segments_with_moviepy(
+        self,
+        mp4: Path,
+        segments: list,
+        output: Path,
+        translated: list | None = None,
+    ) -> bool:
+        """Fallback burner when ffmpeg lacks libass (ass/subtitles filters)."""
+        try:
+            from moviepy import CompositeVideoClip, ImageClip, VideoFileClip
+            import numpy as np
+        except ImportError:
+            logger.error("moviepy is required for subtitle burn fallback without libass")
+            return False
+
+        layout, show_translation = self._resolve_ass_layout(translated)
+        font_size = max(28, int(layout["font_size"] * 0.55))
+        bottom_margin = max(24, int(layout["translation_margin"] * 0.35))
+
+        video = None
+        composed = None
+        try:
+            video = VideoFileClip(str(mp4))
+            overlays = []
+            for index, segment in enumerate(segments):
+                start = self._srt_timestamp_to_seconds(segment["start"])
+                end = self._srt_timestamp_to_seconds(segment["end"])
+                duration = max(0.05, end - start)
+                lines = [segment.get("text", "")]
+                if show_translation and translated and index < len(translated):
+                    lines.append(translated[index].get("text", ""))
+                image = self._render_subtitle_overlay_image(lines, int(video.w), font_size=font_size)
+                overlay = (
+                    ImageClip(np.array(image), duration=duration)
+                    .with_start(start)
+                    .with_position(("center", max(0, int(video.h - image.height - bottom_margin))))
+                )
+                overlays.append(overlay)
+
+            composed = CompositeVideoClip([video, *overlays], size=video.size)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            temp_audio = output.with_suffix(".temp-audio.m4a")
+            composed.write_videofile(
+                str(output),
+                codec="libx264",
+                audio_codec="aac",
+                fps=video.fps or 25,
+                logger=None,
+                temp_audiofile=str(temp_audio),
+            )
+            temp_audio.unlink(missing_ok=True)
+            return output.exists()
+        except Exception as exc:
+            logger.error(f"PIL/moviepy subtitle fallback failed for {mp4.name}: {exc}")
+            return False
+        finally:
+            if composed is not None:
+                try:
+                    composed.close()
+                except Exception:
+                    pass
+            if video is not None:
+                try:
+                    video.close()
+                except Exception:
+                    pass
+
     def _process_clip(
         self,
         mp4: Path,
@@ -592,20 +774,31 @@ class SubtitleBurner:
         translated_output_path: Path | None = None,
     ) -> bool:
         """Generate ASS + burn into output MP4."""
-        ass_path = output.with_suffix(".ass")
-        ok = self.prepare_ass_for_clip(
-            srt,
-            ass_path,
-            subtitle_translation,
-            translated_srt_path=translated_srt_path,
-            translated_output_path=translated_output_path,
-        )
-        if not ok:
+        segments = self._parse_srt(srt)
+        if not segments:
             logger.warning(f"  Skipping {mp4.name}: no subtitle segments found")
             return False
-        success = self._burn_ass(mp4, ass_path, output)
-        ass_path.unlink(missing_ok=True)
-        return success
+
+        translated = None
+        if translated_srt_path and Path(translated_srt_path).exists():
+            translated = self._parse_srt(Path(translated_srt_path))
+        elif subtitle_translation and self.client:
+            translated = self._translate_srt(segments, subtitle_translation)
+            if translated and translated_output_path:
+                self._write_srt_segments(Path(translated_output_path), translated)
+
+        if self.ffmpeg_supports_subtitle_burn():
+            ass_path = output.with_suffix(".ass")
+            ass_path.write_text(self._generate_ass(segments, translated), encoding="utf-8")
+            success = self._burn_ass(mp4, ass_path, output)
+            ass_path.unlink(missing_ok=True)
+            return success
+
+        logger.warning(
+            "ffmpeg missing ass/subtitles filters (no libass); "
+            f"using PIL/moviepy fallback for {mp4.name}"
+        )
+        return self._burn_segments_with_moviepy(mp4, segments, output, translated=translated)
 
     def _parse_srt(self, srt_path: Path) -> list:
         """Parse SRT file into list of {start, end, text} dicts."""
@@ -982,16 +1175,24 @@ class SubtitleBurner:
 
     def _burn_ass(self, mp4: Path, ass: Path, output: Path) -> bool:
         """Run ffmpeg to burn the ASS subtitle file into the video."""
-        # ffmpeg's ass= filter struggles with long paths — copy to a short /tmp path
+        # ffmpeg's ass=/subtitles= filters struggle with long paths — copy to a short /tmp path
+        filter_name = "ass" if self._ffmpeg_has_filter("ass") else "subtitles"
         tmp_fd, tmp_ass_str = tempfile.mkstemp(suffix=".ass")
         os.close(tmp_fd)
         tmp_ass = Path(tmp_ass_str)
         try:
             tmp_ass.write_bytes(ass.read_bytes())
+            if filter_name == "ass":
+                vf = self.build_ass_filter_value(tmp_ass.name, language="zh")
+            else:
+                vf = f"subtitles={self._escape_ffmpeg_filter_value(tmp_ass.name)}"
+                _, font_dir = self._resolve_ass_font("zh")
+                if font_dir:
+                    vf += f":fontsdir={self._escape_ffmpeg_filter_value(font_dir)}"
             cmd = [
                 "ffmpeg",
                 "-i", str(mp4.resolve()),
-                "-vf", self.build_ass_filter_value(tmp_ass.name, language="zh"),
+                "-vf", vf,
                 "-c:a", "copy",
                 "-y", str(output.resolve()),
             ]

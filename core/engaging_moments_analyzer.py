@@ -307,7 +307,13 @@ class EngagingMomentsAnalyzer:
         prompt_parts.append("\n\n")
         prompt_parts.append(build_clip_duration_prompt_section(self.clip_duration_preference.preset))
         if self.user_intent:
-            prompt_parts.append(f"\n\n## User Focus\n\nThe user is specifically looking for: {self.user_intent}\nPrioritize moments related to this when selecting and ranking clips.")
+            prompt_parts.append(
+                f"\n\n## User Focus\n\n"
+                f"The user is specifically looking for: {self.user_intent}\n"
+                "Prioritize moments that match this focus. If none match well, "
+                "return fewer moments (or none) instead of unrelated generic highlights. "
+                "In why_engaging, note how each moment relates to this focus."
+            )
         prompt_parts.append(f"\n\n## Transcript Data for {part_name}\n\n")
         prompt_parts.append(transcript_context)
         prompt_parts.append("\n\nPlease analyze this transcript and identify engaging moments following the requirements above.")
@@ -352,7 +358,13 @@ class EngagingMomentsAnalyzer:
             "standalone clarity, and engagement strength."
         )
         if self.user_intent:
-            prompt_parts.append(f"\n\n## User Focus\n\nThe user is specifically looking for: {self.user_intent}\nPrioritize moments related to this when selecting and ranking the final clips.")
+            prompt_parts.append(
+                f"\n\n## User Focus\n\n"
+                f"The user is specifically looking for: {self.user_intent}\n"
+                "Rank matching moments above generic highlights. Prefer fewer strong "
+                "matches over filling the quota with unrelated clips. "
+                "In why_engaging, note how each moment relates to this focus."
+            )
         prompt_parts.append(f"\n\n## All Engaging Moments Data\n\n")
         prompt_parts.append(moments_context)
         prompt_parts.append(f"\n\nPlease select and rank the top {self.max_clips} most engaging moments following the requirements above.")

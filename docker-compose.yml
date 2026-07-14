@@ -1,0 +1,41 @@
+services:
+  openclip:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Uncomment in China / restricted networks if deb.debian.org is slow:
+        # APT_MIRROR: mirrors.aliyun.com
+        APT_MIRROR: ${APT_MIRROR:-}
+    image: openclip:latest
+    container_name: openclip
+    ports:
+      - "${OPENCLIP_PORT:-8502}:8502"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      OPENCLIP_HOST: "0.0.0.0"
+      OPENCLIP_PORT: "8502"
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GLM_API_KEY: ${GLM_API_KEY:-}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      CUSTOM_OPENAI_API_KEY: ${CUSTOM_OPENAI_API_KEY:-}
+      CUSTOM_OPENAI_BASE_URL: ${CUSTOM_OPENAI_BASE_URL:-}
+      CUSTOM_OPENAI_MODEL: ${CUSTOM_OPENAI_MODEL:-}
+      HUGGINGFACE_TOKEN: ${HUGGINGFACE_TOKEN:-}
+    volumes:
+      # Persist runtime data from the host (jobs/ is intentionally not in the image).
+      - ./jobs:/app/jobs
+      - ./processed_videos:/app/processed_videos
+      - ./data:/app/data
+      - openclip-cache:/app/.cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8502/api/config"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+
+volumes:
+  openclip-cache:

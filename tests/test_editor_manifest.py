@@ -289,7 +289,18 @@ def test_discover_manifest_by_project_id_prefers_latest_duplicate(tmp_path):
     ("job_payload", "use_manager", "expected_state", "expect_pending", "expect_current_path", "expect_error_substring"),
     [
         ({"status": "pending", "current_step": "Queued"}, False, "pending", True, None, None),
-        ({"status": "processing", "current_step": "Running"}, True, "recoverable", True, None, "Interrupted"),
+        (
+            {
+                "status": "processing",
+                "current_step": "Running",
+                "options": {"kind": "editor_rerender"},
+            },
+            True,
+            "recoverable",
+            True,
+            None,
+            "Interrupted",
+        ),
         ({"status": "completed", "current_step": "Done"}, False, "clean", False, "rerendered.mp4", None),
         ({"status": "failed", "current_step": "Failed", "error": "boom"}, False, "failed", False, "good.mp4", "boom"),
         ({"status": "cancelled", "current_step": "Cancelled"}, False, "cancelled", False, "good.mp4", "cancelled"),

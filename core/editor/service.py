@@ -4,9 +4,10 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
+from urllib.parse import quote
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,10 +32,55 @@ from job_manager import JobManager
 logger = logging.getLogger(__name__)
 
 
-def _read_effective_subtitle_text(path: str | None) -> str:
+def _candidate_media_paths(path: str | Path, projects_root: Path) -> list[Path]:
+    """Build path candidates so host absolute paths still resolve under Docker mounts."""
+    candidate = Path(path)
+    projects_root = Path(projects_root)
+    candidates: list[Path] = [candidate]
+
+    parts = candidate.parts
+    if "processed_videos" in parts:
+        idx = parts.index("processed_videos")
+        relative = Path(*parts[idx + 1 :]) if idx + 1 < len(parts) else Path()
+        candidates.append(projects_root / relative)
+        if projects_root.name != "processed_videos":
+            candidates.append(projects_root / "processed_videos" / relative)
+        candidates.append(Path.cwd() / "processed_videos" / relative)
+
+    if not candidate.is_absolute():
+        candidates.extend(
+            [
+                projects_root.parent / candidate,
+                projects_root / candidate,
+                Path.cwd() / candidate,
+            ]
+        )
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for item in candidates:
+        key = str(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def _first_existing_media_path(path: str | Path | None, projects_root: Path | None = None) -> Path | None:
+    if not path:
+        return None
+    root = Path(projects_root) if projects_root is not None else Path.cwd() / "processed_videos"
+    for candidate in _candidate_media_paths(path, root):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _read_effective_subtitle_text(path: str | None, *, projects_root: Path | None = None) -> str:
     if not path:
         return ''
-    subtitle_path = Path(path)
+    subtitle_path = _first_existing_media_path(path, projects_root) or Path(path)
     if not subtitle_path.exists():
         return ''
     try:
@@ -88,11 +134,15 @@ def _write_subtitle_segments(path: Path, segments: list[dict[str, str]]) -> None
     path.write_text("\n\n".join(blocks).strip() + "\n", encoding="utf-8")
 
 
-def _legacy_override_segments_for_clip(clip: EditorClip) -> list[dict[str, str]]:
+def _legacy_override_segments_for_clip(
+    clip: EditorClip,
+    *,
+    projects_root: Path | None = None,
+) -> list[dict[str, str]]:
     if not (clip.subtitle_recipe.override_text or "").strip():
         return []
     override_lines = [line.strip() for line in (clip.subtitle_recipe.override_text or "").splitlines() if line.strip()]
-    timed_segments = _derive_subtitle_segments_for_bounds(clip)
+    timed_segments = _derive_subtitle_segments_for_bounds(clip, projects_root=projects_root)
     if timed_segments:
         remapped_segments: list[dict[str, str]] = []
         for index, segment in enumerate(timed_segments, start=1):
@@ -126,10 +176,14 @@ def _legacy_override_segments_for_clip(clip: EditorClip) -> list[dict[str, str]]
     ]
 
 
-def _parse_subtitle_segments_from_path(path: str | None) -> list[dict[str, str]]:
+def _parse_subtitle_segments_from_path(
+    path: str | None,
+    *,
+    projects_root: Path | None = None,
+) -> list[dict[str, str]]:
     if not path:
         return []
-    subtitle_path = Path(path)
+    subtitle_path = _first_existing_media_path(path, projects_root) or Path(path)
     if not subtitle_path.exists():
         return []
     try:
@@ -147,20 +201,33 @@ def _parse_subtitle_segments_from_path(path: str | None) -> list[dict[str, str]]
         return []
 
 
-def _derive_subtitle_segments_for_bounds(clip: EditorClip) -> list[dict[str, str]]:
+def _derive_subtitle_segments_for_bounds(
+    clip: EditorClip,
+    *,
+    projects_root: Path | None = None,
+) -> list[dict[str, str]]:
     source_subtitle_path = clip.metadata.get("source_subtitle_path")
     if not source_subtitle_path:
-        return _parse_subtitle_segments_from_path(clip.asset_registry.subtitle_active)
+        return _parse_subtitle_segments_from_path(
+            clip.asset_registry.subtitle_active,
+            projects_root=projects_root,
+        )
 
-    subtitle_path = Path(source_subtitle_path)
+    subtitle_path = _first_existing_media_path(source_subtitle_path, projects_root) or Path(source_subtitle_path)
     if not subtitle_path.exists():
-        return _parse_subtitle_segments_from_path(clip.asset_registry.subtitle_active)
+        return _parse_subtitle_segments_from_path(
+            clip.asset_registry.subtitle_active,
+            projects_root=projects_root,
+        )
 
     try:
         generator = ClipGenerator(output_dir=str(subtitle_path.parent))
         segments = generator._parse_srt_file(str(subtitle_path))
     except Exception:
-        return _parse_subtitle_segments_from_path(clip.asset_registry.subtitle_active)
+        return _parse_subtitle_segments_from_path(
+            clip.asset_registry.subtitle_active,
+            projects_root=projects_root,
+        )
 
     clip_start = parse_timecode_to_seconds(clip.start_time)
     clip_end = parse_timecode_to_seconds(clip.end_time)
@@ -183,18 +250,22 @@ def _derive_subtitle_segments_for_bounds(clip: EditorClip) -> list[dict[str, str
     return derived_segments
 
 
-def _effective_subtitle_segments_for_clip(clip: EditorClip) -> list[dict[str, str]]:
+def _effective_subtitle_segments_for_clip(
+    clip: EditorClip,
+    *,
+    projects_root: Path | None = None,
+) -> list[dict[str, str]]:
     override_segments = _serialize_subtitle_segments(clip.subtitle_recipe.override_segments)
     if override_segments:
         return override_segments
-    legacy_override_segments = _legacy_override_segments_for_clip(clip)
+    legacy_override_segments = _legacy_override_segments_for_clip(clip, projects_root=projects_root)
     if legacy_override_segments:
         return legacy_override_segments
-    return _derive_subtitle_segments_for_bounds(clip)
+    return _derive_subtitle_segments_for_bounds(clip, projects_root=projects_root)
 
 
-def _derive_subtitle_text_for_bounds(clip: EditorClip) -> str:
-    return _subtitle_segments_to_text(_effective_subtitle_segments_for_clip(clip))
+def _derive_subtitle_text_for_bounds(clip: EditorClip, *, projects_root: Path | None = None) -> str:
+    return _subtitle_segments_to_text(_effective_subtitle_segments_for_clip(clip, projects_root=projects_root))
 
 
 def _remap_text_segments_onto_timings(
@@ -274,9 +345,54 @@ class EditorService:
             raise KeyError(project_id)
         return path
 
+    def _to_portable_path(self, path: Path) -> str:
+        """Prefer cwd-relative paths when safe; otherwise keep absolute paths."""
+        resolved = path.resolve()
+        try:
+            return str(resolved.relative_to(Path.cwd().resolve()))
+        except ValueError:
+            return str(resolved)
+
+    def _prepare_runtime_manifest(self, manifest: EditorManifest, manifest_path: Path) -> None:
+        """Rewrite host-absolute asset paths so Docker / relocated checkouts can open them."""
+        manifest.project_root = self._to_portable_path(manifest_path.parent)
+        source = self._resolve_media_path(manifest.source_video_path)
+        if source is not None:
+            manifest.source_video_path = self._to_portable_path(source)
+
+        for clip in manifest.clips:
+            for attr in (
+                "raw_clip",
+                "current_composed_clip",
+                "horizontal_cover",
+                "vertical_cover",
+            ):
+                value = getattr(clip.asset_registry, attr, None)
+                resolved = self._resolve_media_path(value)
+                if resolved is not None:
+                    setattr(clip.asset_registry, attr, self._to_portable_path(resolved))
+
+            sidecars = dict(clip.asset_registry.subtitle_sidecars or {})
+            for key, value in list(sidecars.items()):
+                resolved = self._resolve_media_path(value)
+                if resolved is not None:
+                    sidecars[key] = self._to_portable_path(resolved)
+            clip.asset_registry.subtitle_sidecars = sidecars
+
+            source_subtitle = clip.metadata.get("source_subtitle_path")
+            resolved_source_subtitle = self._resolve_media_path(source_subtitle)
+            if resolved_source_subtitle is not None:
+                clip.metadata["source_subtitle_path"] = self._to_portable_path(resolved_source_subtitle)
+
+            if clip.source_video_path:
+                resolved_clip_source = self._resolve_media_path(clip.source_video_path)
+                if resolved_clip_source is not None:
+                    clip.source_video_path = self._to_portable_path(resolved_clip_source)
+
     def _load_manifest(self, project_id: str) -> tuple[EditorManifest, Path]:
         manifest_path = self._manifest_path(project_id)
         manifest = load_manifest(manifest_path)
+        self._prepare_runtime_manifest(manifest, manifest_path)
         if reconcile_manifest(manifest, job_manager=self.job_manager, jobs_dir=self.jobs_dir):
             save_manifest(manifest, manifest_path)
         return manifest, manifest_path
@@ -286,32 +402,23 @@ class EditorService:
         save_manifest(manifest, manifest_path)
 
     def _resolve_media_path(self, path: str | None) -> Path | None:
-        if not path:
-            return None
-        candidate = Path(path)
-        candidates = [candidate]
-        if not candidate.is_absolute():
-            candidates.extend(
-                [
-                    self.projects_root.parent / candidate,
-                    self.projects_root / candidate,
-                ]
-            )
-        for media_path in candidates:
-            if media_path.exists():
-                return media_path
-        return None
+        return _first_existing_media_path(path, self.projects_root)
 
     def _project_media_url(self, project_id: str, media_kind: str) -> str:
-        return f"/api/projects/{project_id}/media/{media_kind}"
+        root = quote(str(self.projects_root.resolve()), safe="")
+        return f"/api/projects/{project_id}/media/{media_kind}?projects_root={root}"
 
     def _clip_media_url(self, project_id: str, clip_id: str, media_kind: str) -> str:
-        return f"/api/projects/{project_id}/clips/{clip_id}/media/{media_kind}"
+        root = quote(str(self.projects_root.resolve()), safe="")
+        return f"/api/projects/{project_id}/clips/{clip_id}/media/{media_kind}?projects_root={root}"
 
     def _serialize_clip(self, clip: EditorClip) -> dict[str, Any]:
         payload = clip.to_dict()
-        subtitle_segments = _effective_subtitle_segments_for_clip(clip)
-        translated_subtitle_segments = _parse_subtitle_segments_from_path(clip.asset_registry.subtitle_translated)
+        subtitle_segments = _effective_subtitle_segments_for_clip(clip, projects_root=self.projects_root)
+        translated_subtitle_segments = _parse_subtitle_segments_from_path(
+            clip.asset_registry.subtitle_translated,
+            projects_root=self.projects_root,
+        )
         payload["active_subtitle_path"] = clip.asset_registry.subtitle_active
         payload["subtitle_segments"] = subtitle_segments
         payload["effective_subtitle_text"] = _subtitle_segments_to_text(subtitle_segments)
@@ -443,7 +550,7 @@ class EditorService:
         else:
             translated_segments = _remap_text_segments_onto_timings(
                 [{"text": line.strip()} for line in str(subtitle_text or "").splitlines() if line.strip()],
-                _effective_subtitle_segments_for_clip(clip),
+                _effective_subtitle_segments_for_clip(clip, projects_root=self.projects_root),
                 fill_from_timed_segments=False,
             )
         translated_path = self._translated_subtitle_path(manifest, clip)
@@ -559,6 +666,7 @@ class EditorService:
 
     def _boundary_worker(self, manifest_path: Path, clip_id: str, _job, progress_callback) -> dict[str, Any]:
         manifest = load_manifest(manifest_path)
+        self._prepare_runtime_manifest(manifest, manifest_path)
         clip = manifest.clip_by_id(clip_id)
         raw_clip_path = Path(clip.asset_registry.raw_clip or "")
         if not clip.source_video_path or not raw_clip_path:
@@ -602,8 +710,14 @@ class EditorService:
             subtitle_sidecars["active"] = subtitle_sidecars.get("whisper") or subtitle_sidecars.get("original")
         translated_path = subtitle_sidecars.get("translated")
         if translated_path and subtitle_sidecars.get("active"):
-            translated_segments = _parse_subtitle_segments_from_path(translated_path)
-            refreshed_segments = _parse_subtitle_segments_from_path(subtitle_sidecars.get("active"))
+            translated_segments = _parse_subtitle_segments_from_path(
+                translated_path,
+                projects_root=self.projects_root,
+            )
+            refreshed_segments = _parse_subtitle_segments_from_path(
+                subtitle_sidecars.get("active"),
+                projects_root=self.projects_root,
+            )
             if translated_segments and refreshed_segments:
                 remapped_translated_segments = _remap_text_segments_onto_timings(
                     translated_segments,
@@ -722,6 +836,12 @@ class EditorService:
                 translated_srt_path=translated_sidecar_path if translated_sidecar_path and translated_sidecar_path.exists() else None,
                 translated_output_path=translated_sidecar_path if translated_sidecar_path and not translated_sidecar_path.exists() else None,
             ):
+                if not SubtitleBurner.ffmpeg_supports_subtitle_burn():
+                    raise RuntimeError(
+                        "Failed to burn subtitle-only output: ffmpeg is missing libass "
+                        "(no ass/subtitles filters), and the PIL fallback also failed. "
+                        "Reinstall ffmpeg with libass enabled."
+                    )
                 raise RuntimeError("Failed to burn subtitle-only output")
         if translated_sidecar_path and translated_sidecar_path.exists():
             clip.asset_registry.subtitle_sidecars["translated"] = str(translated_sidecar_path)
@@ -730,6 +850,7 @@ class EditorService:
 
     def _subtitle_worker(self, manifest_path: Path, clip_id: str, _job, progress_callback) -> dict[str, Any]:
         manifest = load_manifest(manifest_path)
+        self._prepare_runtime_manifest(manifest, manifest_path)
         clip = manifest.clip_by_id(clip_id)
         output_path = self._render_current_composed_clip(manifest, clip, progress_callback)
         clip.recovery.pending_assets = {
@@ -741,6 +862,7 @@ class EditorService:
 
     def _cover_worker(self, manifest_path: Path, clip_id: str, _job, progress_callback) -> dict[str, Any]:
         manifest = load_manifest(manifest_path)
+        self._prepare_runtime_manifest(manifest, manifest_path)
         clip = manifest.clip_by_id(clip_id)
         source_clip = Path(clip.asset_registry.raw_clip or clip.asset_registry.current_composed_clip or "")
         if not source_clip.exists():
@@ -823,162 +945,348 @@ class EditorService:
         return FileResponse(media_path)
 
 
+def register_editor_api_routes(
+    app: FastAPI,
+    get_service: Callable[[Optional[str]], EditorService],
+    *,
+    include_jobs: bool = True,
+    include_legacy_aliases: bool = True,
+) -> None:
+    """Register editor project/clip API routes on an existing FastAPI app."""
+
+    def service_for(projects_root: Optional[str]) -> EditorService:
+        return get_service(projects_root)
+
+    @app.get("/api/projects")
+    def list_projects(projects_root: Optional[str] = Query(default=None)) -> list[dict[str, Any]]:
+        return service_for(projects_root).list_projects()
+
+    if include_legacy_aliases:
+        @app.get("/projects")
+        def list_projects_legacy(projects_root: Optional[str] = Query(default=None)) -> list[dict[str, Any]]:
+            return service_for(projects_root).list_projects()
+
+    @app.get("/api/projects/{project_id}")
+    def load_project(project_id: str, projects_root: Optional[str] = Query(default=None)) -> dict[str, Any]:
+        try:
+            return service_for(projects_root).load_project(project_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Unknown project_id: {project_id}") from None
+
+    if include_legacy_aliases:
+        @app.get("/projects/{project_id}/data")
+        def load_project_legacy(project_id: str, projects_root: Optional[str] = Query(default=None)) -> dict[str, Any]:
+            try:
+                return service_for(projects_root).load_project(project_id)
+            except KeyError:
+                raise HTTPException(status_code=404, detail=f"Unknown project_id: {project_id}") from None
+
+    @app.get("/api/projects/{project_id}/clips/{clip_id}")
+    def get_clip(
+        project_id: str,
+        clip_id: str,
+        projects_root: Optional[str] = Query(default=None),
+    ) -> dict[str, Any]:
+        try:
+            return service_for(projects_root).get_clip(project_id, clip_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    if include_legacy_aliases:
+        @app.get("/projects/{project_id}/clips/{clip_id}")
+        def get_clip_legacy(
+            project_id: str,
+            clip_id: str,
+            projects_root: Optional[str] = Query(default=None),
+        ) -> dict[str, Any]:
+            try:
+                return service_for(projects_root).get_clip(project_id, clip_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    @app.post("/api/projects/{project_id}/clips/{clip_id}/preview-bounds")
+    def preview_bounds(
+        project_id: str,
+        clip_id: str,
+        payload: dict[str, Any] = Body(...),
+        projects_root: Optional[str] = Query(default=None),
+    ) -> dict[str, Any]:
+        try:
+            return service_for(projects_root).preview_bounds(
+                project_id,
+                clip_id,
+                payload.get("start_time") or payload.get("start"),
+                payload.get("end_time") or payload.get("end"),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    @app.patch("/api/projects/{project_id}/clips/{clip_id}/bounds")
+    def update_bounds(
+        project_id: str,
+        clip_id: str,
+        payload: dict[str, Any] = Body(...),
+        projects_root: Optional[str] = Query(default=None),
+    ) -> dict[str, Any]:
+        try:
+            return service_for(projects_root).update_clip_bounds(
+                project_id,
+                clip_id,
+                payload.get("start_time") or payload.get("start"),
+                payload.get("end_time") or payload.get("end"),
+                payload.get("speed"),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    if include_legacy_aliases:
+        @app.post("/projects/{project_id}/clips/{clip_id}/bounds")
+        def update_bounds_legacy(
+            project_id: str,
+            clip_id: str,
+            payload: dict[str, Any] = Body(...),
+            projects_root: Optional[str] = Query(default=None),
+        ) -> dict[str, Any]:
+            try:
+                return service_for(projects_root).update_clip_bounds(
+                    project_id,
+                    clip_id,
+                    payload.get("start_time") or payload.get("start"),
+                    payload.get("end_time") or payload.get("end"),
+                    payload.get("speed"),
+                )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.patch("/api/projects/{project_id}/clips/{clip_id}/subtitle")
+    def update_subtitle_override(
+        project_id: str,
+        clip_id: str,
+        payload: dict[str, Any] = Body(...),
+        projects_root: Optional[str] = Query(default=None),
+    ) -> dict[str, Any]:
+        try:
+            return service_for(projects_root).update_clip_subtitles(
+                project_id,
+                clip_id,
+                payload.get("subtitle_text", ""),
+                payload.get("subtitle_segments"),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    if include_legacy_aliases:
+        @app.post("/projects/{project_id}/clips/{clip_id}/subtitle-override")
+        def update_subtitle_override_legacy(
+            project_id: str,
+            clip_id: str,
+            payload: dict[str, Any] = Body(...),
+            projects_root: Optional[str] = Query(default=None),
+        ) -> dict[str, Any]:
+            try:
+                return service_for(projects_root).update_clip_subtitles(
+                    project_id,
+                    clip_id,
+                    payload.get("subtitle_text", ""),
+                    payload.get("subtitle_segments"),
+                )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    @app.patch("/api/projects/{project_id}/clips/{clip_id}/translated-subtitle")
+    def update_translated_subtitle(
+        project_id: str,
+        clip_id: str,
+        payload: dict[str, Any] = Body(...),
+        projects_root: Optional[str] = Query(default=None),
+    ) -> dict[str, Any]:
+        try:
+            return service_for(projects_root).update_clip_translated_subtitles(
+                project_id,
+                clip_id,
+                payload.get("subtitle_text", ""),
+                payload.get("subtitle_segments"),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    @app.patch("/api/projects/{project_id}/clips/{clip_id}/cover-title")
+    def update_cover_title(
+        project_id: str,
+        clip_id: str,
+        payload: dict[str, Any] = Body(...),
+        projects_root: Optional[str] = Query(default=None),
+    ) -> dict[str, Any]:
+        try:
+            return service_for(projects_root).update_cover_title(project_id, clip_id, payload.get("title_text", ""))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    if include_legacy_aliases:
+        @app.post("/projects/{project_id}/clips/{clip_id}/cover-title")
+        def update_cover_title_legacy(
+            project_id: str,
+            clip_id: str,
+            payload: dict[str, Any] = Body(...),
+            projects_root: Optional[str] = Query(default=None),
+        ) -> dict[str, Any]:
+            try:
+                return service_for(projects_root).update_cover_title(project_id, clip_id, payload.get("title_text", ""))
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    @app.post("/api/projects/{project_id}/clips/{clip_id}/rerender/{operation}")
+    def rerender_clip(
+        project_id: str,
+        clip_id: str,
+        operation: str,
+        projects_root: Optional[str] = Query(default=None),
+    ) -> dict[str, Any]:
+        try:
+            return service_for(projects_root).request_rerender(project_id, clip_id, operation)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    if include_legacy_aliases:
+        @app.post("/projects/{project_id}/clips/{clip_id}/rerender/{operation}")
+        def rerender_clip_legacy(
+            project_id: str,
+            clip_id: str,
+            operation: str,
+            projects_root: Optional[str] = Query(default=None),
+        ) -> dict[str, Any]:
+            try:
+                return service_for(projects_root).request_rerender(project_id, clip_id, operation)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/projects/{project_id}/clips/{clip_id}/resume")
+    def resume_clip(
+        project_id: str,
+        clip_id: str,
+        projects_root: Optional[str] = Query(default=None),
+    ) -> dict[str, Any]:
+        try:
+            return service_for(projects_root).resume_rerender(project_id, clip_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    if include_legacy_aliases:
+        @app.post("/projects/{project_id}/clips/{clip_id}/resume")
+        def resume_clip_legacy(
+            project_id: str,
+            clip_id: str,
+            projects_root: Optional[str] = Query(default=None),
+        ) -> dict[str, Any]:
+            try:
+                return service_for(projects_root).resume_rerender(project_id, clip_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    if include_jobs:
+        @app.get("/api/jobs/{job_id}")
+        def get_job(job_id: str, projects_root: Optional[str] = Query(default=None)) -> dict[str, Any]:
+            try:
+                return service_for(projects_root).get_job_status(job_id)
+            except KeyError:
+                raise HTTPException(status_code=404, detail=f"Unknown job_id: {job_id}") from None
+
+        if include_legacy_aliases:
+            @app.get("/jobs/{job_id}")
+            def get_job_legacy(job_id: str, projects_root: Optional[str] = Query(default=None)) -> dict[str, Any]:
+                try:
+                    return service_for(projects_root).get_job_status(job_id)
+                except KeyError:
+                    raise HTTPException(status_code=404, detail=f"Unknown job_id: {job_id}") from None
+
+    @app.get("/api/projects/{project_id}/media/{media_kind}")
+    def get_project_media(
+        project_id: str,
+        media_kind: str,
+        projects_root: Optional[str] = Query(default=None),
+    ):
+        try:
+            return service_for(projects_root).get_project_media(project_id, media_kind)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Unknown media kind: {media_kind}") from None
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    @app.get("/api/projects/{project_id}/clips/{clip_id}/media/{media_kind}")
+    def get_clip_media(
+        project_id: str,
+        clip_id: str,
+        media_kind: str,
+        projects_root: Optional[str] = Query(default=None),
+    ):
+        try:
+            return service_for(projects_root).get_clip_media(project_id, clip_id, media_kind)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+
+
 def create_app(projects_root: str | Path = "processed_videos", jobs_dir: str | Path = "jobs") -> FastAPI:
     service = EditorService(projects_root=projects_root, jobs_dir=jobs_dir)
     app = FastAPI(title="OpenClip Editor Service", version="0.1.0")
-    app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
     app.state.editor_service = service
 
-    dist_dir = Path('editor_frontend/dist')
-    assets_dir = dist_dir / 'assets'
+    dist_dir = Path("editor_frontend/dist")
+    assets_dir = dist_dir / "assets"
     if assets_dir.exists():
-        app.mount('/assets', StaticFiles(directory=assets_dir), name='assets')
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
     def serve_spa(project_id: str | None = None):
-        index = dist_dir / 'index.html'
+        index = dist_dir / "index.html"
         if index.exists():
             return FileResponse(
                 index,
-                headers={'Cache-Control': 'no-store, no-cache, must-revalidate'},
+                headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
             )
-        project_note = f"<p>Project: <code>{project_id}</code></p>" if project_id else ''
+        project_note = f"<p>Project: <code>{project_id}</code></p>" if project_id else ""
         return HTMLResponse(
-            '<html><body><h1>OpenClip Editor</h1><p>The editor frontend has not been built yet.</p>' + project_note + '</body></html>'
+            "<html><body><h1>OpenClip Editor</h1><p>The editor frontend has not been built yet.</p>"
+            + project_note
+            + "</body></html>"
         )
 
-    @app.get('/')
+    @app.get("/")
     def root():
-        return {'service': 'openclip-editor', 'status': 'ok'}
+        return {"service": "openclip-editor", "status": "ok"}
 
-    @app.get('/healthz')
+    @app.get("/healthz")
     def healthz() -> dict[str, str]:
-        return {'status': 'ok'}
+        return {"status": "ok"}
 
-    @app.get('/projects')
-    @app.get('/api/projects')
-    def list_projects() -> list[dict[str, Any]]:
-        return service.list_projects()
-
-    @app.get('/projects/{project_id}')
+    @app.get("/projects/{project_id}")
     def spa_project(project_id: str):
         return serve_spa(project_id)
 
-    @app.get('/api/projects/{project_id}')
-    @app.get('/projects/{project_id}/data')
-    def load_project(project_id: str) -> dict[str, Any]:
-        try:
-            return service.load_project(project_id)
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f'Unknown project_id: {project_id}') from None
+    def get_service(requested_root: Optional[str] = None) -> EditorService:
+        if requested_root:
+            normalized = str(Path(requested_root).resolve())
+            if normalized != str(service.projects_root.resolve()):
+                return EditorService(projects_root=normalized, jobs_dir=jobs_dir)
+        return service
 
-    @app.get('/api/projects/{project_id}/clips/{clip_id}')
-    @app.get('/projects/{project_id}/clips/{clip_id}')
-    def get_clip(project_id: str, clip_id: str) -> dict[str, Any]:
-        try:
-            return service.get_clip(project_id, clip_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-
-    @app.post('/api/projects/{project_id}/clips/{clip_id}/preview-bounds')
-    def preview_bounds(project_id: str, clip_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        try:
-            return service.preview_bounds(project_id, clip_id, payload.get('start_time') or payload.get('start'), payload.get('end_time') or payload.get('end'))
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-
-    @app.patch('/api/projects/{project_id}/clips/{clip_id}/bounds')
-    @app.post('/projects/{project_id}/clips/{clip_id}/bounds')
-    def update_bounds(project_id: str, clip_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        try:
-            return service.update_clip_bounds(
-                project_id,
-                clip_id,
-                payload.get('start_time') or payload.get('start'),
-                payload.get('end_time') or payload.get('end'),
-                payload.get('speed'),
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
-
-    @app.patch('/api/projects/{project_id}/clips/{clip_id}/subtitle')
-    @app.post('/projects/{project_id}/clips/{clip_id}/subtitle-override')
-    def update_subtitle_override(project_id: str, clip_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        try:
-            return service.update_clip_subtitles(
-                project_id,
-                clip_id,
-                payload.get('subtitle_text', ''),
-                payload.get('subtitle_segments'),
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-
-    @app.patch('/api/projects/{project_id}/clips/{clip_id}/translated-subtitle')
-    def update_translated_subtitle(project_id: str, clip_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        try:
-            return service.update_clip_translated_subtitles(
-                project_id,
-                clip_id,
-                payload.get('subtitle_text', ''),
-                payload.get('subtitle_segments'),
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-
-    @app.patch('/api/projects/{project_id}/clips/{clip_id}/cover-title')
-    @app.post('/projects/{project_id}/clips/{clip_id}/cover-title')
-    def update_cover_title(project_id: str, clip_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        try:
-            return service.update_cover_title(project_id, clip_id, payload.get('title_text', ''))
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-
-    @app.post('/api/projects/{project_id}/clips/{clip_id}/rerender/{operation}')
-    @app.post('/projects/{project_id}/clips/{clip_id}/rerender/{operation}')
-    def rerender_clip(project_id: str, clip_id: str, operation: str) -> dict[str, Any]:
-        try:
-            return service.request_rerender(project_id, clip_id, operation)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
-
-    @app.post('/api/projects/{project_id}/clips/{clip_id}/resume')
-    @app.post('/projects/{project_id}/clips/{clip_id}/resume')
-    def resume_clip(project_id: str, clip_id: str) -> dict[str, Any]:
-        try:
-            return service.resume_rerender(project_id, clip_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
-
-    @app.get('/api/jobs/{job_id}')
-    @app.get('/jobs/{job_id}')
-    def get_job(job_id: str) -> dict[str, Any]:
-        try:
-            return service.get_job_status(job_id)
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f'Unknown job_id: {job_id}') from None
-
-    @app.get('/api/projects/{project_id}/media/{media_kind}')
-    def get_project_media(project_id: str, media_kind: str):
-        try:
-            return service.get_project_media(project_id, media_kind)
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f'Unknown media kind: {media_kind}') from None
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-
-    @app.get('/api/projects/{project_id}/clips/{clip_id}/media/{media_kind}')
-    def get_clip_media(project_id: str, clip_id: str, media_kind: str):
-        try:
-            return service.get_clip_media(project_id, clip_id, media_kind)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-
+    register_editor_api_routes(
+        app,
+        get_service,
+        include_jobs=True,
+        include_legacy_aliases=True,
+    )
     return app

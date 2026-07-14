@@ -1,164 +1,76 @@
 # Engaging Moments Analysis - Video Part
 
 ## Task
-Analyze the provided video transcript and identify interesting and engaging moments from live streaming videos. Focus on segments that would be compelling for viewers and suitable for creating short clips.
+Analyze the provided transcript and identify engaging moments suitable for short clips.
 
-**CRITICAL**: Only analyze the transcript provided to you. All timestamps MUST exist in the actual transcript - do not hallucinate or use placeholder timestamps.
+**CRITICAL**: Only use the transcript provided. Every timestamp MUST appear in that transcript — never invent or use placeholders.
 
-## Content Type Classification
+## Content Type
+Pick one primary type, then apply the matching priorities below (plus the general criteria).
 
-First, identify the content type of this video from these categories:
+| Type | Prioritize |
+|------|------------|
+| **entertainment** | Complete jokes (setup → punchline → reaction), climaxes, chat/audience reactions |
+| **knowledge** | Aha moments, actionable tips; include enough setup to stand alone |
+| **speech** | Emotional peaks, memorable quotes, narrative climax; stand alone |
+| **opinion** | Strong/surprising takes, debates; include the triggering question/context if present |
+| **experience** | Personal stories with emotional depth and relatability |
+| **business** | Expert insights and actionable advice that make sense alone |
+| **content_review** | Unique opinions, bold takes, sharp comparisons |
 
-| Type | Characteristics | Key Engagement Signals |
-|------|-----------------|------------------------|
-| **entertainment** | Jokes, games, performances, variety shows | Laughter peaks, audience reactions, game climaxes |
-| **knowledge** | Tutorials, explanations, educational content | Key insights, "aha moments", actionable tips |
-| **speech** | Presentations, talks, storytelling | Emotional peaks, inspirational quotes, audience applause |
-| **opinion** | Debates, commentary, reviews | Strong viewpoints, controversial takes, debates |
-| **experience** | Life stories, personal anecdotes | Relatable moments, emotional resonance, personal revelations |
-| **business** | Professional advice, market analysis | Value propositions, expert insights, ROI signals |
-| **content_review** | Movie/game reviews, analyses | Unique opinions, surprising takes, comparisons |
+## General Engagement Criteria
+Prefer moments with: emotional impact, information value, interactivity, memorability, relatability.
+Prefer segments that are complete (clear arc), well-paced, authentic, and unique.
 
-## General Engagement Criteria (Always Apply)
+## Do NOT Select
+- Openings: greetings, logistics, "welcome back", schedule talk
+- Ads, sponsorship reads, product plugs
+- Pure filler, small talk, or topic transitions with no payoff
+- Repeated restatements of the same point
+- Incomplete thoughts cut mid-sentence or mid-argument
 
-These universal criteria apply to ALL content types:
+## Duration
+- Follow the runtime **Clip Length Preference** section injected by OpenClip (hard min/max and ideal range)
+- Prefer a natural arc that fits the range; do not pad weak context just to hit length
+- If shorter than minimum, extend only when nearby context improves standalone quality
+- If longer than maximum, split or trim to the strongest complete arc
 
-### High Engagement Indicators:
-- **Emotional Impact**: Moments that evoke strong emotions (laughter, surprise, inspiration, excitement)
-- **Information Value**: Segments with unique insights, surprising facts, or valuable knowledge
-- **Interactivity**: Moments with dialogue, debates, or audience interaction
-- **Memorability**: Standout quotes, unique perspectives, or defining moments
-- **Relatability**: Content viewers can identify with or learn from
+## Time Boundaries (Critical)
+- Copy timestamps **exactly** as shown in the transcript
+- `00:01:55` = 1 min 55 sec — NOT `01:55:00` (1 hr 55 min)
+- Do not use placeholders like `HH:MM:SS` or example times
+- `start_time`: first core statement of the moment; skip prior filler
+- `end_time`: last sentence that completes the moment; end at a natural pause/summary — never blindly use the transcript end
+- Do not cut mid-sentence, mid-key-point, or mid-reasoning
+- Moments must not overlap; if they do, keep the stronger one
 
-### Quality Indicators:
-- **Completeness**: Segments with clear beginning, development, and conclusion
-- **Pacing**: Moments with good energy flow and rhythm
-- **Authenticity**: Genuine reactions, unscripted moments, or natural interactions
-- **Uniqueness**: Rare occurrences, special guests, or unexpected events
+## Standalone Quality
+Each clip should be understandable without the rest of the video. Include brief setup (question, claim being answered) when it appears nearby in the transcript.
 
----
+## User Focus
+If a **User Focus** section is present in this prompt:
+- Prefer moments that match that focus
+- If none match well, return fewer moments (or an empty array) rather than forcing unrelated "generic highlights"
+- In `why_engaging`, note whether/how the moment matches the user focus
 
-## Type-Specific Engagement Criteria (Complement General)
+## Titles, Tags, Levels
+- Titles: compelling, no emojis; follow language-specific title guidelines
+- Avoid sensitive, hateful, or offensive wording
+- `engagement_level`: `"high"` | `"medium"` | `"low"`
+- Tags from: `["co-hosting", "interactive", "humorous", "live-chemistry", "funny", "highlight", "reaction", "gaming", "chat-interaction", "insight", "inspiring", "controversial", "relatable", "valuable", "educational"]`
+- `summary`: 1–2 sentences on what happens (not why it is engaging)
+- `why_engaging`: why a viewer would care
 
-In addition to the general criteria above, apply these type-specific nuances based on detected content type:
-
-### For ENTERTAINMENT:
-- Preserve complete jokes (setup → punchline → reaction)
-- Capture game climaxes and unexpected twists
-- Include audience/chat reactions
-- Prioritize comedic timing and funny moments
-
-### For KNOWLEDGE:
-- Focus on "aha moments" and key insights
-- Identify actionable tips or valuable explanations
-- Look for concepts that simplify complex topics
-- Prioritize educational value and practical applications
-- Standalone: the clip should be understandable without watching the rest of the video; include enough context (e.g. the question or setup that prompted the point) in the time range
-
-### For SPEECH:
-- Find emotional peaks and inspirational moments
-- Capture memorable quotes and powerful statements
-- Identify audience engagement (applause, etc.)
-- Look for storytelling climax and narrative resolution
-- Standalone: the clip should be understandable without watching the rest of the video
-
-### For OPINION:
-- Prioritize strong, controversial, or surprising viewpoints
-- Look for debates or disagreements
-- Find relatable or thought-provoking statements
-- Identify unique perspectives that challenge common beliefs
-- Standalone: the clip should be understandable without watching the rest of the video; include the question or context that triggered the opinion if present in the transcript
-
-### For EXPERIENCE:
-- Seek personal stories with emotional depth
-- Find relatable moments viewers can identify with
-- Look for surprising personal revelations
-- Capture authentic emotional expressions
-
-### For BUSINESS:
-- Focus on expert insights and valuable advice
-- Identify actionable strategies and methodologies
-- Look for unique market perspectives and predictions
-- Prioritize high-value professional content
-- Standalone: the clip should be understandable without watching the rest of the video; include enough context so the advice or insight makes sense on its own
-
-### For CONTENT_REVIEW:
-- Capture unique or surprising opinions
-- Find bold predictions or controversial takes
-- Look for entertaining critiques and comparisons
-- Identify surprising revelations about reviewed content
-
-## Requirements
-
-### Duration Constraints (Must Follow)
-- Follow the runtime **Clip Length Preference** section injected by OpenClip
-- That section defines the hard minimum duration, hard maximum duration, and ideal target range for this run
-- Prefer clips whose natural arc fits the selected range
-- Do not pad weak or unrelated context just to satisfy the selected length
-- If a moment is shorter than the selected minimum, extend it only when nearby context improves standalone quality
-- If a moment is longer than the selected maximum, split it into multiple moments or trim to the most engaging complete arc
-
-### Time Boundary Principles (Critical)
-
-**MUST USE ACTUAL TIMESTAMPS FROM THE PROVIDED TRANSCRIPT**
-- Do not invent or hallucinate timestamps
-- Verify every timestamp exists in the transcript before including it
-- The transcript excerpt must match the actual text between start_time and end_time
-- **CRITICAL**: Copy timestamps EXACTLY as shown. `00:01:55` means 1min 55sec, NOT `01:55:00` (which is 1hr 55min)
-
-**How to determine `start_time`:**
-- Locate the first core statement about the engaging moment
-- Skip unrelated small talk, filler words, or transitions before it
-- Start at semantic boundaries for natural introduction
-- Look for topic introduction phrases, opinion shifts, or new discussion subjects
-
-**How to determine `end_time` (Most Important):**
-- MUST be the timestamp of the LAST relevant sentence covering the core moment
-- Ensure semantic completeness - avoid abrupt cut-offs
-- End at natural pauses, summary statements, or topic transitions
-- DO NOT include unrelated content after the moment ends
-- DO NOT blindly set end_time to the end of the transcript
-
-**Avoid Cutting At:**
-- Middle of sentences
-- During key point development
-- Critical logic reasoning steps
-- Continuous discussions without clear semantic boundaries
-
-### Handling Overlapping Moments
-- If two engaging moments overlap in time, choose the stronger one
-- Do not create multiple clips from the same time range
-- Ensure each moment has a unique, non-overlapping time range
-
-### Content Guidelines
-- Create attractive and engaging titles (no emojis, punctuation allowed)
-- Titles should avoid sensitive, negative, hate, or offensive words
-- Co-hosting segments and interactive moments are usually most engaging
-- Include a brief summary describing what happens in the moment
-- Provide clear explanations for why each moment is engaging
-
-### Engagement Analysis
-- Provide engagement levels: "high", "medium", or "low"
-- Add relevant tags from: ["co-hosting", "interactive", "humorous", "live-chemistry", "funny", "highlight", "reaction", "gaming", "chat-interaction", "insight", "inspiring", "controversial", "relatable", "valuable", "educational"]
-- Include "why_engaging" explanations that describe what makes each moment compelling
-
-## Analysis Instructions
-
-1. **Read the entire transcript first** - Understand the full context before identifying moments
-2. **Classify content type** - Determine which category best fits the video
-3. **Apply engagement criteria** - Use both general and type-specific criteria
-4. **Identify candidate moments** - Find segments that meet the engagement standards
-5. **Verify timestamps** - Ensure all timestamps actually exist in the provided transcript
-6. **Check duration** - Confirm each moment follows the runtime Clip Length Preference bounds
-7. **Avoid overlaps** - Ensure moments don't overlap in time
-8. **Quality over quantity** - Only include genuinely engaging moments
-9. **Write a summary** - Write a brief 1-2 sentence description of what happens in each moment
-10. **Write compelling titles** - Follow the language-specific title guidelines
-
-**If no moments meet the criteria**: Return an empty array rather than forcing low-quality selections.
+## Analysis Steps
+1. Read the full transcript
+2. Classify content type
+3. Select candidates using general + type criteria; apply exclusions
+4. Verify timestamps exist; check duration and non-overlap
+5. Write summary, title, tags, why_engaging
+6. Quality over quantity — empty `engaging_moments` is better than weak forced picks
 
 ## Output Format
-Return your response as a JSON object following this exact structure:
+Return ONLY valid JSON (no markdown fences, no extra text):
 
 ```json
 {
@@ -166,76 +78,25 @@ Return your response as a JSON object following this exact structure:
   "detected_content_type": "entertainment",
   "engaging_moments": [
     {
-      "title": "First engaging moment title without emojis",
-      "start_time": "HH:MM:SS",
-      "end_time": "HH:MM:SS",
+      "title": "...",
+      "start_time": "00:01:55",
+      "end_time": "00:03:10",
       "duration_seconds": 75,
-      "summary": "Brief description of what happens in this moment in 1-2 sentences.",
+      "summary": "...",
       "engagement_details": {
         "engagement_level": "high"
       },
-      "why_engaging": "Detailed explanation of why this moment is engaging",
-      "tags": ["co-hosting", "interactive", "humorous", "live-chemistry"]
-    },
-    {
-      "title": "Second engaging moment title without emojis",
-      "start_time": "HH:MM:SS",
-      "end_time": "HH:MM:SS",
-      "duration_seconds": 60,
-      "summary": "Brief description of what happens in this second moment in 1-2 sentences.",
-      "engagement_details": {
-        "engagement_level": "medium"
-      },
-      "why_engaging": "Detailed explanation of why this moment is engaging",
-      "tags": ["humorous", "funny", "highlight"]
+      "why_engaging": "...",
+      "tags": ["interactive", "humorous"]
     }
   ],
-  "total_moments": 2,
+  "total_moments": 1,
   "analysis_timestamp": "2024-01-01T12:00:00Z"
 }
 ```
 
-**CRITICAL TIMESTAMP RULES:**
-1. **start_time** and **end_time** MUST correspond to actual timestamps in the provided transcript
-2. DO NOT use placeholder timestamps like "HH:MM:SS" or example timestamps like "00:01:30"
-3. Verify every timestamp exists in the transcript before including it
-4. If you cannot find valid timestamps, return an empty array
-
-**IMPORTANT QUALITY GUIDELINES:**
-1. You can identify MULTIPLE engaging moments if they exist (as shown in the example with 2 moments)
-2. If NO moments meet the engagement criteria, return: `"engaging_moments": []` with `"total_moments": 0`
-3. DO NOT force output if the content lacks genuine engagement value
-4. Quality over quantity - only include moments that truly meet the standards
-5. Better to return zero moments than low-quality or hallucinated selections
-6. Ensure moments do not overlap in time - each should have a unique time range
-
-## Field Specifications
-
-### Top-Level Required Fields:
-- **video_part**: Identifier for this video segment (e.g., "part01")
-- **detected_content_type**: The content type category detected from the video (entertainment/knowledge/speech/opinion/experience/business/content_review)
-
-### Required Fields for Each Moment:
-- **title**: Compelling title without emojis (follow language-specific guidelines)
-- **start_time**: Simple time format (HH:MM:SS or MM:SS) - NOT SRT format with milliseconds
-- **end_time**: Simple time format (HH:MM:SS or MM:SS) - NOT SRT format with milliseconds
-- **duration_seconds**: Integer duration in seconds (must follow the runtime Clip Length Preference bounds)
-- **summary**: Brief 1-2 sentence description of what happens in this moment (content description, not engagement reasoning)
-- **engagement_details**: Object with "engagement_level" ("high", "medium", or "low")
-- **why_engaging**: Detailed explanation of what makes this moment compelling
-- **tags**: Array of relevant tags from the approved list
-
-### Engagement Level Guidelines:
-- **"high"**: Exceptional moments with strong viewer appeal, multiple interactions, humor, or memorable content
-- **"medium"**: Good moments with decent entertainment value and some interaction
-- **"low"**: Mild interest moments that still meet minimum engagement criteria
-
-### Approved Tags:
-["co-hosting", "interactive", "humorous", "live-chemistry", "funny", "highlight", "reaction", "gaming", "chat-interaction", "insight", "inspiring", "controversial", "relatable", "valuable", "educational"]
-
-## IMPORTANT: JSON Response Format
-- Return ONLY valid JSON, no additional text or explanations
-- Use the exact structure shown above
-- Ensure all strings are properly quoted
-- Do not include trailing commas
-- Verify JSON syntax before responding
+### Required fields
+- Top-level: `video_part`, `detected_content_type`, `engaging_moments`, `total_moments`, `analysis_timestamp`
+- Each moment: `title`, `start_time`, `end_time`, `duration_seconds`, `summary`, `engagement_details.engagement_level`, `why_engaging`, `tags`
+- Times: `HH:MM:SS` or `MM:SS` (not SRT milliseconds)
+- If none qualify: `"engaging_moments": []`, `"total_moments": 0`

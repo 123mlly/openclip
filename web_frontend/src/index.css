@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: "Manrope", "Segoe UI", sans-serif;
+  --font-display: "Syne", "Manrope", sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+:root {
+  /* Broadcast desk: cool monitor gray + signal blue */
+  --radius: 0.7rem;
+  --background: oklch(0.972 0.008 240);
+  --foreground: oklch(0.22 0.025 250);
+  --card: oklch(0.995 0.003 240);
+  --card-foreground: oklch(0.22 0.025 250);
+  --popover: oklch(0.995 0.003 240);
+  --popover-foreground: oklch(0.22 0.025 250);
+  --primary: oklch(0.48 0.14 250);
+  --primary-foreground: oklch(0.98 0.01 240);
+  --secondary: oklch(0.94 0.012 240);
+  --secondary-foreground: oklch(0.3 0.03 250);
+  --muted: oklch(0.945 0.01 240);
+  --muted-foreground: oklch(0.5 0.025 250);
+  --accent: oklch(0.935 0.03 240);
+  --accent-foreground: oklch(0.32 0.08 250);
+  --destructive: oklch(0.52 0.18 25);
+  --border: oklch(0.885 0.015 240);
+  --input: oklch(0.885 0.015 240);
+  --ring: oklch(0.58 0.12 250);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    margin: 0;
+    min-height: 100vh;
+    font-family: var(--font-sans);
+    background-color: var(--background);
+    background-image:
+      radial-gradient(ellipse 80% 48% at 12% -10%, color-mix(in oklab, var(--primary) 18%, transparent), transparent 55%),
+      radial-gradient(ellipse 55% 38% at 100% 0%, color-mix(in oklab, oklch(0.72 0.06 220) 16%, transparent), transparent 50%),
+      linear-gradient(170deg, oklch(0.985 0.006 240) 0%, oklch(0.96 0.012 245) 100%);
+    background-attachment: fixed;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+}

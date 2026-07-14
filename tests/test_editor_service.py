@@ -136,6 +136,20 @@ def test_editor_service_resolves_repo_relative_media_paths_against_projects_root
     assert resolved == source_path
 
 
+def test_editor_service_resolves_foreign_absolute_processed_videos_paths(tmp_path):
+    projects_root = tmp_path / "processed_videos"
+    cover_path = projects_root / "sample" / "clips" / "cover.jpg"
+    cover_path.parent.mkdir(parents=True)
+    cover_path.write_bytes(b"cover")
+
+    service = EditorService(projects_root=projects_root, jobs_dir=tmp_path / "jobs")
+    foreign = Path("/Users/other/Documents/openclip/processed_videos/sample/clips/cover.jpg")
+
+    resolved = service._resolve_media_path(str(foreign))
+
+    assert resolved == cover_path
+
+
 
 def test_editor_service_fastapi_routes(tmp_path):
     manifest, projects_root, jobs_dir = _create_project(tmp_path)

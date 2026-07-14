@@ -61,7 +61,7 @@ LLM_CONFIG: Dict[str, Dict[str, Any]] = {
         "base_url": _env_llm_base_url("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"),
         # Old models (qwen-turbo, qwen-plus, qwen-max) use DashScope endpoint
         "legacy_base_url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation",
-        "default_model": _env_llm_model("qwen", "qwen3.6-plus"),
+        "default_model": _env_llm_model("qwen", "qwen3.7-plus"),
         "default_params": {
             "max_tokens": 16384,
             "temperature": 0.7,
@@ -130,11 +130,11 @@ DEFAULT_LLM_PROVIDER: str = "qwen"
 # Video splitting
 MAX_DURATION_MINUTES: float = 20.0
 
-# Whisper model for transcript generation
-# Options: tiny, base, small, medium, large, turbo
+# Whisper / faster-whisper model for transcript generation
+# Options: tiny, base, small, medium, large (→ large-v3), turbo (→ large-v3-turbo)
 WHISPER_MODEL: str = "base"
 
-# Lightweight Whisper model used only for transcript language detection.
+# Lightweight faster-whisper model used only for transcript language detection.
 # Keep this small because the full transcript backend is selected after detection.
 TRANSCRIPT_LANGUAGE_DETECT_MODEL: str = os.getenv("TRANSCRIPT_LANGUAGE_DETECT_MODEL", "tiny")
 

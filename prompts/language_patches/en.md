@@ -9,39 +9,39 @@ All output must be in English, including:
 
 ### Title Writing Guidelines
 
-**Core Principle: Titles should be as clickable as short-form video titles**
+**Core principle: specific, hooky, not clickbait — short-form energy without overselling**
 
 #### Must-Follow Rules:
 1. **Be Specific, Not Generic**
-   - Avoid abstract descriptions like "discussion", "interaction", "moment"
-   - Use concrete people, events, and actions
+   - Avoid vague words like "discussion", "interaction", "moment"
+   - Name people, events, actions, or the concrete takeaway
 
-2. **Highlight Conflict, Twists, and Climaxes**
-   - Capture the most dramatic moments
-   - Emphasize surprises, unexpected turns, emotional peaks
+2. **Highlight Conflict, Twists, or Peaks**
+   - Capture the most dramatic beat
+   - Let the fact create curiosity; do not stack hype words
 
-3. **Use Numbers and Exclamation Marks for Impact**
-   - Numbers make content specific and credible
-   - Exclamation marks convey strong emotions
+3. **Numbers Help; Exclamation Marks Sparingly**
+   - Numbers make claims concrete (counts, amounts, steps)
+   - At most one exclamation mark; omit when emotion is mild
 
-4. **Capture Key People and Key Actions**
-   - Include host names or nicknames
-   - Use strong action verbs: slams, reveals, exposes, admits, destroys, ignites
+4. **Key People and Clear Verbs**
+   - Include host names or nicknames when known
+   - Prefer clear verbs: reveals, admits, flips, breaks down, pushes back
+   - Avoid hyperbolic/attack verbs: slams, destroys, obliterates, explodes
 
-5. **Title Length Control**
-   - Ideal length: 8-15 words
+5. **Length**
+   - Ideal: 8–15 words
    - Maximum: 20 words
-   - Ensure full display on mobile devices
 
-6. **Content to Avoid**
-   - No emoji symbols
-   - No formal conjunctions like "and", "as well as"
-   - Don't write like news headlines with objective descriptions
-   - No sensitive, negative, hateful, or offensive words
+6. **Avoid**
+   - No emoji
+   - No stiff news-headline phrasing
+   - No sensitive, hateful, or offensive wording
+   - No titles that overpromise vs. the actual clip
 
 #### Title Quality Checklist:
-- [ ] Does it include specific people, events, or numbers?
-- [ ] Does it spark curiosity or emotional resonance?
-- [ ] Is it concise and punchy (under 15 words)?
-- [ ] Does it avoid abstract, vague descriptions?
-- [ ] Does it read like a short-form video title rather than a news headline?
+- [ ] Specific people, events, or numbers?
+- [ ] Sparks curiosity without overselling?
+- [ ] Under 15 words and punchy?
+- [ ] Avoids vague abstractions?
+- [ ] Reads like a short-form title, not clickbait?

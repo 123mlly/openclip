@@ -36,6 +36,8 @@ PERSISTED_TOP_LEVEL_FIELDS = {
     "cookie_browser",
     "mode",
     "agentic_analysis",
+    "output_dir",
+    "user_intent",
 }
 
 PERSISTED_LLM_PROVIDER_FIELDS = {"model", "base_url"}
@@ -82,9 +84,25 @@ def _sanitize_preference_value(key: str, value: Any, default_data: Mapping[str, 
     if key in SAFE_ENUM_FIELDS:
         return copy.deepcopy(value) if value in SAFE_ENUM_FIELDS[key] else copy.deepcopy(default_data.get(key))
     if key in BOOLEAN_FIELDS:
-        return bool(value) if isinstance(value, bool) else copy.deepcopy(default_data.get(key))
+        if isinstance(value, bool):
+            return value
+        if value in (0, 1, "0", "1", "true", "false", "True", "False"):
+            return str(value).lower() in {"1", "true"}
+        return copy.deepcopy(default_data.get(key))
     if key in INTEGER_FIELDS:
-        return int(value) if isinstance(value, int) and value >= 0 else copy.deepcopy(default_data.get(key))
+        try:
+            ivalue = int(value)
+        except (TypeError, ValueError):
+            return copy.deepcopy(default_data.get(key))
+        return ivalue if ivalue >= 0 else copy.deepcopy(default_data.get(key))
+    if key == "output_dir":
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return copy.deepcopy(default_data.get(key))
+    if key in {"user_intent"}:
+        if isinstance(value, str):
+            return value[:2000]
+        return copy.deepcopy(default_data.get(key))
     return copy.deepcopy(value)
 
 EXCLUDED_FIELDS = {
@@ -95,8 +113,6 @@ EXCLUDED_FIELDS = {
     "custom_prompt_text",
     "speaker_references_dir",
     "processing_result",
-    "output_dir",
-    "user_intent",
 }
 
 

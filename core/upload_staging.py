@@ -62,27 +62,52 @@ def sanitize_uploaded_filename(filename: str) -> str:
     return f"{stem}{suffix}"
 
 
+def sanitize_cookies_filename(filename: str) -> str:
+    path = Path(filename or "cookies.txt")
+    suffix = path.suffix.lower() or ".txt"
+    if suffix not in {".txt", ".cookies"}:
+        raise ValueError("Cookies file must be a .txt or .cookies Netscape cookie export")
+    stem = FileStringUtils.sanitize_filename(path.stem) or "cookies"
+    return f"{stem}{suffix}"
+
+
+def _write_uploaded_bytes(uploaded_file: Any, staged_path: Path) -> int:
+    sync_file = getattr(uploaded_file, "file", None)
+    if sync_file is not None and hasattr(sync_file, "read"):
+        sync_file.seek(0)
+        with staged_path.open("wb") as staged_file:
+            shutil.copyfileobj(sync_file, staged_file, length=1024 * 1024)
+        return int(getattr(uploaded_file, "size", None) or staged_path.stat().st_size)
+    if hasattr(uploaded_file, "getvalue"):
+        upload_bytes = uploaded_file.getvalue()
+        staged_path.write_bytes(upload_bytes)
+        return len(upload_bytes)
+    if hasattr(uploaded_file, "read") and hasattr(uploaded_file, "seek"):
+        uploaded_file.seek(0)
+        with staged_path.open("wb") as staged_file:
+            shutil.copyfileobj(uploaded_file, staged_file, length=1024 * 1024)
+        return int(getattr(uploaded_file, "size", staged_path.stat().st_size))
+    raise TypeError(f"Unsupported upload object type: {type(uploaded_file)!r}")
+
+
 def stage_uploaded_file(uploaded_file: Any, uploads_root: str | Path, owner_session_id: str) -> dict[str, Any]:
-    sanitized_name = sanitize_uploaded_filename(getattr(uploaded_file, "name", "upload.mp4"))
+    original_name = (
+        getattr(uploaded_file, "filename", None)
+        or getattr(uploaded_file, "name", None)
+        or "upload.mp4"
+    )
+    sanitized_name = sanitize_uploaded_filename(str(original_name))
     upload_id = uuid.uuid4().hex
     upload_dir = owner_upload_root(uploads_root, owner_session_id) / upload_id
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     staged_path = upload_dir / sanitized_name
-    if hasattr(uploaded_file, "read") and hasattr(uploaded_file, "seek"):
-        uploaded_file.seek(0)
-        with staged_path.open("wb") as staged_file:
-            shutil.copyfileobj(uploaded_file, staged_file, length=1024 * 1024)
-        size_bytes = int(getattr(uploaded_file, "size", staged_path.stat().st_size))
-    else:
-        upload_bytes = uploaded_file.getvalue()
-        staged_path.write_bytes(upload_bytes)
-        size_bytes = len(upload_bytes)
+    size_bytes = _write_uploaded_bytes(uploaded_file, staged_path)
 
     metadata = {
         "upload_id": upload_id,
         "owner_session_id": owner_session_id,
-        "original_filename": getattr(uploaded_file, "name", sanitized_name),
+        "original_filename": str(original_name),
         "stored_filename": sanitized_name,
         "staged_path": str(staged_path.resolve()),
         "created_at": utc_now_iso(),
@@ -93,6 +118,42 @@ def stage_uploaded_file(uploaded_file: Any, uploads_root: str | Path, owner_sess
     metadata_path_for_upload_dir(upload_dir).write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return metadata
 
+
+def stage_cookies_file(uploaded_file: Any, uploads_root: str | Path, owner_session_id: str) -> dict[str, Any]:
+    """Stage a Netscape cookies.txt export for yt-dlp / downloader auth."""
+    original_name = (
+        getattr(uploaded_file, "filename", None)
+        or getattr(uploaded_file, "name", None)
+        or "cookies.txt"
+    )
+    sanitized_name = sanitize_cookies_filename(str(original_name))
+    upload_id = uuid.uuid4().hex
+    upload_dir = owner_upload_root(uploads_root, owner_session_id) / "_cookies" / upload_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    staged_path = upload_dir / sanitized_name
+    size_bytes = _write_uploaded_bytes(uploaded_file, staged_path)
+    if size_bytes <= 0:
+        staged_path.unlink(missing_ok=True)
+        raise ValueError("Cookies file is empty")
+
+    # Light sanity check: Netscape cookie files are text and usually contain tab-separated rows
+    # or the "# Netscape HTTP Cookie File" header. Reject obvious binary uploads early.
+    sample = staged_path.read_bytes()[:2048]
+    if b"\x00" in sample:
+        staged_path.unlink(missing_ok=True)
+        raise ValueError("Cookies file looks binary; upload a Netscape cookies.txt export")
+
+    return {
+        "upload_id": upload_id,
+        "owner_session_id": owner_session_id,
+        "original_filename": str(original_name),
+        "stored_filename": sanitized_name,
+        "staged_path": str(staged_path.resolve()),
+        "created_at": utc_now_iso(),
+        "size_bytes": size_bytes,
+        "kind": "cookies",
+    }
 
 def metadata_path_for_upload_dir(upload_dir: str | Path) -> Path:
     return Path(upload_dir) / UPLOAD_METADATA_FILENAME

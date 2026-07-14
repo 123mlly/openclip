@@ -37,6 +37,10 @@ env/
 *.swo
 *~
 
+# Node
+node_modules/
+.playwright-mcp/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -74,6 +78,8 @@ fonts-noto-cjk_*.deb
 
 # Runtime data
 jobs/
+data/
+*.db
 persistent_data.json
 
 # Local development config
@@ -85,3 +91,5 @@ CLAUDE.md
 openclip-dev-config/
 !editor_frontend/dist/
 !editor_frontend/dist/**
+!web_frontend/dist/
+!web_frontend/dist/**

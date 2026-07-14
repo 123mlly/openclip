@@ -1,0 +1,110 @@
+/* Timeline + shell accents — rest of editor uses Tailwind/shadcn. */
+
+.editor-shell {
+  animation: editor-shell-in 320ms ease-out;
+}
+
+@keyframes editor-shell-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.editor-timeline {
+  position: relative;
+  height: 3.5rem;
+  overflow: hidden;
+  border-radius: 0.85rem;
+  border: 1px solid color-mix(in oklab, var(--border) 85%, var(--primary));
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 11px,
+      color-mix(in oklab, var(--border) 55%, transparent) 11px,
+      color-mix(in oklab, var(--border) 55%, transparent) 12px
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--muted) 70%, white),
+      color-mix(in oklab, var(--card) 92%, var(--primary))
+    );
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 55%, transparent);
+}
+
+.editor-timeline__clip {
+  position: absolute;
+  top: 0.6rem;
+  bottom: 0.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.45rem;
+  background: color-mix(in oklab, var(--muted-foreground) 18%, transparent);
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 600;
+  pointer-events: none;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.editor-timeline__clip--active {
+  background: color-mix(in oklab, var(--primary) 26%, transparent);
+  color: var(--primary);
+}
+
+.editor-timeline__window {
+  position: absolute;
+  top: 0.35rem;
+  bottom: 0.35rem;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.55rem;
+  border: 1px solid color-mix(in oklab, var(--primary) 50%, white);
+  background: linear-gradient(
+    105deg,
+    color-mix(in oklab, var(--primary) 78%, transparent),
+    color-mix(in oklab, oklch(0.55 0.12 230) 85%, transparent)
+  );
+  color: var(--primary-foreground);
+  font-size: 0.75rem;
+  font-weight: 700;
+  box-shadow:
+    0 10px 28px color-mix(in oklab, var(--primary) 22%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 35%, transparent);
+  transition: left 80ms linear, width 80ms linear;
+}
+
+.editor-timeline__handle {
+  position: absolute;
+  top: 0.18rem;
+  bottom: 0.18rem;
+  width: 0.58rem;
+  border: 0;
+  border-radius: 999px;
+  background: white;
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--primary) 35%, transparent);
+  cursor: ew-resize;
+  touch-action: none;
+  transition: transform 120ms ease;
+}
+
+.editor-timeline__handle:hover,
+.editor-timeline__handle:focus-visible {
+  transform: scaleX(1.15);
+}
+
+.editor-timeline__handle--start {
+  left: 0.15rem;
+}
+
+.editor-timeline__handle--end {
+  right: 0.15rem;
+}

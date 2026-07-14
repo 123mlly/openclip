@@ -1302,7 +1302,7 @@ Note: Set the API key environment variable for your selected provider when requi
                        help='Output directory (default: processed_videos)')
     parser.add_argument('--force-whisper', action='store_true',
                        help='Force local ASR transcript generation (ignore platform subtitles). '
-                            'English uses Whisper; Chinese uses Paraformer.')
+                            'English uses faster-whisper; Chinese uses Paraformer.')
     parser.add_argument('--skip-download', action='store_true', default=SKIP_DOWNLOAD,
                        help='Skip video download and use existing downloaded video')
     parser.add_argument('--skip-transcript', action='store_true', default=SKIP_TRANSCRIPT,
