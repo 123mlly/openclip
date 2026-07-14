@@ -407,26 +407,32 @@ export default function HomePage() {
 
   async function handleOpenEditor(job: Job) {
     const project =
-      job.result?.editor_project
-      ?? (job.options.project_id
-        ? {
-            project_id: String(job.options.project_id),
-            projects_root: job.options.projects_root
-              ? String(job.options.projects_root)
-              : undefined,
-          }
-        : null)
+      job.result?.editor_project?.project_id
+        ? job.result.editor_project
+        : (job.options.project_id
+          ? {
+              project_id: String(job.options.project_id),
+              projects_root: job.options.projects_root
+                ? String(job.options.projects_root)
+                : undefined,
+            }
+          : null)
     if (!project?.project_id) {
-      notify('Missing editor project', 'error')
+      notify(t(locale, 'missingEditorProject'), 'error')
       return
     }
     try {
+      // Let the API remap host absolute roots (e.g. /Users/.../processed_videos) for Docker.
       const { editor_url } = await launchEditor(project.project_id, project.projects_root)
       navigate(editor_url)
       notify(t(locale, 'editorLaunched'))
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), 'error')
     }
+  }
+
+  function hasEditorProject(job: Job): boolean {
+    return Boolean(job.result?.editor_project?.project_id || job.options.project_id)
   }
 
   function toggleResult(job: Job) {
@@ -1000,7 +1006,7 @@ export default function HomePage() {
                           {open ? t(locale, 'clearResults') : t(locale, 'view')}
                         </Button>
                       ) : null}
-                      {job.status === 'completed' && (job.result?.editor_project || job.is_editor_rerender) ? (
+                      {job.status === 'completed' && (hasEditorProject(job) || job.is_editor_rerender) ? (
                         <Button type="button" size="sm" onClick={() => void handleOpenEditor(job)}>
                           {t(locale, 'openEditor')}
                         </Button>

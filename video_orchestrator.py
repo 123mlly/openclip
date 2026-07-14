@@ -1148,6 +1148,13 @@ class VideoOrchestrator:
             "project_root": str(video_root_dir),
             "projects_root": str(video_root_dir.parent),
         }
+        # Prefer portable roots so Docker and host checkouts share the same job metadata.
+        try:
+            result.editor_project["project_root"] = str(video_root_dir.resolve().relative_to(Path.cwd().resolve()))
+            result.editor_project["projects_root"] = str(video_root_dir.parent.resolve().relative_to(Path.cwd().resolve()))
+            result.editor_project["manifest_path"] = str(Path(manifest_path).resolve().relative_to(Path.cwd().resolve()))
+        except ValueError:
+            pass
         result.clip_generation["editor_project_id"] = manifest.project_id
         result.clip_generation["editor_manifest_path"] = str(manifest_path)
 

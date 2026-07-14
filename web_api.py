@@ -198,6 +198,50 @@ class EditorLaunchRequest(BaseModel):
     projects_root: Optional[str] = None
 
 
+def resolve_projects_root(projects_root: Optional[str], default_projects_root: str) -> str:
+    """
+    Map host-absolute or relative projects_root values onto this runtime.
+
+    Jobs created on the Mac often store `/Users/.../processed_videos`. Inside
+    Docker that path does not exist, so editor launch would 404 as "missing project".
+    """
+    default = Path(default_projects_root).resolve()
+    candidates: list[Path] = []
+    if projects_root:
+        raw = Path(projects_root)
+        candidates.append(raw)
+        if not raw.is_absolute():
+            candidates.append(Path.cwd() / raw)
+        parts = raw.parts
+        if "processed_videos" in parts:
+            idx = parts.index("processed_videos")
+            # projects_root may be the processed_videos dir itself, or a parent path ending there.
+            if idx == len(parts) - 1:
+                candidates.append(Path.cwd() / "processed_videos")
+                candidates.append(default)
+            else:
+                # Accidentally passed a project folder; use its parent processed_videos root.
+                relative = Path(*parts[idx:])
+                candidates.append(Path.cwd() / relative)
+                candidates.append(default.parent / relative if default.name != "processed_videos" else default)
+                candidates.append(default)
+    candidates.append(default)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved.exists() and resolved.is_dir():
+            return str(resolved)
+    return str(default)
+
+
 class SubtitlePreviewRequest(BaseModel):
     preset: str = "default"
     font_size: str = "medium"
@@ -270,7 +314,7 @@ def create_app() -> FastAPI:
     default_projects_root = str((Path.cwd() / "processed_videos").resolve())
 
     def get_editor_service(projects_root: Optional[str] = None) -> EditorService:
-        root = str(Path(projects_root or default_projects_root).resolve())
+        root = resolve_projects_root(projects_root, default_projects_root)
         cached = editor_services.get(root)
         if cached is None:
             cached = EditorService(projects_root=root, jobs_dir=default_jobs_dir)
@@ -649,12 +693,20 @@ def create_app() -> FastAPI:
 
     @app.post("/api/editor/launch")
     def launch_editor(payload: EditorLaunchRequest) -> dict[str, str]:
-        root = payload.projects_root or default_projects_root
+        root = resolve_projects_root(payload.projects_root, default_projects_root)
         # Ensure the service can resolve the project before handing a URL to the UI.
         try:
             get_editor_service(root).load_project(payload.project_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=f"Unknown project_id: {payload.project_id}") from exc
+        except KeyError:
+            # Retry against the default root when a stale host path was stored on the job.
+            if root != default_projects_root:
+                root = default_projects_root
+                try:
+                    get_editor_service(root).load_project(payload.project_id)
+                except KeyError as exc:
+                    raise HTTPException(status_code=404, detail=f"Unknown project_id: {payload.project_id}") from exc
+            else:
+                raise HTTPException(status_code=404, detail=f"Unknown project_id: {payload.project_id}") from None
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Editor unavailable: {exc}") from exc
         qs = f"?projects_root={quote(str(Path(root).resolve()), safe='')}"
