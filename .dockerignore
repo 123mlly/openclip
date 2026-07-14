@@ -39,6 +39,7 @@ demo/**/*.mp4
 openclip-*.png
 **/*.png
 !logo.png
+!demo/*.png
 !web_frontend/public/**
 
 # IDE / agent

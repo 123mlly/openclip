@@ -23,7 +23,21 @@ OpenClip is a lightweight AI pipeline for extracting highlight clips from long-f
 
 ## 🎬 Demo
 
-![OpenClip Web UI demo](demo/demo_en.gif)
+### Web control room
+
+Home: processing config on the left, job list and uploads on the right.
+
+![OpenClip Web UI — home](./demo/web-ui-home.png)
+
+Expanded processing settings (LLM, clip params, cookies, subtitle styling):
+
+![OpenClip Web UI — settings](./demo/web-ui-settings.png)
+
+### Clip Editor
+
+Open the integrated editor after a job completes — subtitles, covers, and preview in one place:
+
+![OpenClip Clip Editor](./demo/web-ui-editor.png)
 
 ## ✨ Highlights
 
